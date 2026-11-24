@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [0.1.1] — 2026-11-24
+
+### Added
+
+- **25 Flagship Hero Scribes (`src/hw_score_sim/style_packs/hero_scribes.json`):**
+  - Expanded the registered style catalog from **159 → 184** styles across 11 curated JSON packs + 20 built-in core profiles.
+  - Adds 25 deeply researched, paleographically distinct flagship composer & copyist hands spanning five historical eras and traditions:
+    - *Renaissance & Baroque:* Palestrina Sistine Choirbook, Monteverdi Vespers Quill, Couperin Versailles Clavecin, Anna Magdalena Bach Notebook, Vivaldi Turin Concerto Rush.
+    - *Romantic Fair Copies & Opera:* Mendelssohn Leipzig Fair Copy, Clara Schumann Concert Part, Fanny Hensel Berlin Salon, Rossini Naples Opera Rush, Berlioz Paris Grand Score.
+    - *Late-Romantic & Impressionist:* Lili Boulanger Prix de Rome, Ravel Watchmaker Micro-Nib, Scriabin Ecstatic Pencil, Mussorgsky *Pictures* Iron-Gall, Mahler Vienna Blue Crayon.
+    - *20th-Century Modernist & Film:* Stravinsky Morges Fine Pen, Messiaen Birdsong Cahier, George Crumb *Makrokosmos* Fineliner, John Williams Hollywood Pencil, Ennio Morricone Cinecittà Ink.
+    - *Jazz, Tango & Contemporary:* Thelonious Monk Angular Lead Sheet, Bill Evans Jazz Pencil, Astor Piazzolla Buenos Aires Tango, Blue Note Van Gelder Ozalid, Songwriter Spiral Gel-Pen.
+  - Every hero profile passes strict `validate_style()` with zero warnings/clamps and maps cleanly across all 4 axes in `catalog.py`.
+
+---
+
 ## [0.1.0] — 2026-11-24
 
 Initial public MIT-licensed release of `hw-score-sim`, a pure-Python procedural handwritten sheet-music rendering engine for MusicXML and MuseScore files.

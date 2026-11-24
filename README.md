@@ -1,6 +1,6 @@
 # `hw-score-sim`
 
-**Turn any MusicXML or MuseScore file into authentic, pixel-accurate handwritten sheet music — 159 historical & modern scribe styles, 164 discrete glyph archetypes + 18 beam leveling/grouping modes, infinite interpolated hands, zero MuseScore/LilyPond binaries, 100% MIT-licensed.**
+**Turn any MusicXML or MuseScore file into authentic, pixel-accurate handwritten sheet music — 184 historical & modern scribe styles (including 25 flagship Hero Scribes), 164 discrete glyph archetypes + 18 beam leveling/grouping modes, infinite interpolated hands, zero MuseScore/LilyPond binaries, 100% MIT-licensed.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-brightgreen.svg)](pyproject.toml)
@@ -46,7 +46,7 @@ hw-score-sim \
   --styles bach_leipzig_late_quill,beethoven_late_sketchbook,real_book_1970s_felt_tip \
   --out-dir out/
 
-# Browse all 159 registered scribe styles
+# Browse all 184 registered scribe styles
 hw-score-sim --list-styles
 
 # Export cropped per-system PNG strips + per-system MusicXML training targets
@@ -106,8 +106,8 @@ for idx in range(5):
 |---|---|---|---|
 | **License** | **100% MIT** (code + procedural styles) | Engine MIT, **scanned glyph assets `CC-BY-NC`** | **GPL** binaries |
 | **Commercial / Open-Weights ML Training** | Unrestricted | Blocked by `CC-BY-NC` assets | Requires isolating GPL pipeline; engraved look only |
-| **Visual Authenticity** | Procedural nib physics, 159 styles, 164 glyph archetypes + 18 beam modes, 6 paper stocks | Real scanned handwritten cutouts (e.g., MUSCIMA++ / Mashcima) | Publication-grade typeset engraving (uniform fonts) |
-| **Style Diversity** | 159 named styles + **infinite continuous interpolation** | Bound to scanned writer pools | Fixed engraving fonts |
+| **Visual Authenticity** | Procedural nib physics, 184 styles, 164 glyph archetypes + 18 beam modes, 6 paper stocks | Real scanned handwritten cutouts (e.g., MUSCIMA++ / Mashcima) | Publication-grade typeset engraving (uniform fonts) |
+| **Style Diversity** | 184 named styles + **infinite continuous interpolation** | Bound to scanned writer pools | Fixed engraving fonts |
 | **Runtime Dependencies** | Pure Python (`numpy`, `pillow`) — **zero external binaries** | Python + external asset downloads | Headless Qt/GUI or LilyPond binary installs |
 | **Ground Truth** | Exact Bezier staves, glyph bboxes, COCO, YOLO, MusicXML | Pixel masks & MuNG graphs | External alignment or SVG scraping required |
 | **Best Use Case** | Large-scale permissive handwritten OMR pretraining & domain randomization | Academic-only benchmarks matching MUSCIMA++ writers | Typeset sheet music publishing |
@@ -116,13 +116,14 @@ for idx in range(5):
 
 ## The Scribe Universe
 
-### 159 Scribe Styles Across 10 Curated Packs (+ 20 Built-In Core Profiles)
+### 184 Scribe Styles Across 11 Curated Packs (+ 20 Built-In Core Profiles)
 
 Every style is a rich paleographic profile specifying 35+ physical parameters — nib angle and contrast ratio, stroke scale, bow wobble, neuromuscular tremor, ink pooling, dry-brush dropout, slant, notehead/stem/flag/beam/clef/key-signature/barline/rest archetypes, rastrum curvature, bar-width variance, end-of-bar cramming, paper stock, foxing mottle, reverse-side bleed-through, and marginalia.
 
 | Style Pack (`src/hw_score_sim/style_packs/`) | Count | Historical & Visual Focus |
 |---|---|---|
 | *(Built-in core profiles in `styles.py`)* | 20 | Foundational Baroque, Classical, Romantic, Jazz, Student, Left-Handed, Tremor, Hectograph, Red-Pencil |
+| `hero_scribes.json` | 25 | **Flagship Hero Scribes**: Palestrina, Monteverdi, Couperin, A.M. Bach, Vivaldi, Mendelssohn, Clara Schumann, Fanny Hensel, Rossini, Berlioz, Lili Boulanger, Ravel, Scriabin, Mussorgsky, Mahler, Stravinsky, Messiaen, Crumb, John Williams, Morricone, Monk, Bill Evans, Piazzolla, Blue Note Ozalid, Songwriter Gel-Pen |
 | `baroque_classical.json` | 6 | Bach Leipzig quill, Handel London opera rush, Vivaldi furia, Telemann, Haydn, Mozart Vienna |
 | `romantic_autographs.json` | 6 | Beethoven late sketchbook, Schubert Lieder, Schumann diary, Chopin Stichvorlage, Brahms, Liszt |
 | `modernist_20c.json` | 6 | Debussy violet ink, Ravel microscopic precision, Stravinsky Stravigor nib, Bartók field notebook, etc. |
@@ -133,7 +134,7 @@ Every style is a rich paleographic profile specifying 35+ physical parameters �
 | `wild_20c_avantgarde_film_studio.json` | 22 | Stravinsky needle vellum, Prokofiev telegraphic slash, Shostakovich Soviet ballpoint, avant-garde & film scoring |
 | `wild_jazz_pop_world_vernacular.json` | 22 | Bebop napkin ballpoint, Ellington/Strayhorn arranger slash, Blue Note hard-bop pencil, vernacular & studio |
 | `wild_extreme_degraded_everyday.json` | 22 | 0.25 mm mechanical pencil, dry Bic ballpoint, lefty blue gel smear, arthritis tremor, extreme degradations |
-| **Total Registered Styles** | **159** | **Plus infinite continuous interpolation via `interpolate_styles()` & `ScribeSampler`** |
+| **Total Registered Styles** | **184** | **Plus infinite continuous interpolation via `interpolate_styles()` & `ScribeSampler`** |
 
 ### 164 Discrete Glyph Archetypes + 18 Beam Leveling/Grouping Modes + 5 Ledger Styles + 6 Paper Stocks
 
@@ -151,7 +152,19 @@ Every style is a rich paleographic profile specifying 35+ physical parameters �
 | **Ledger Lines** | **5** | `crisp`, `wide_sweep`, `slanted`, `short_tick`, `wavy` |
 | **Paper Stocks** | **6** | `aged_rag`, `bright_white`, `cream_manuscript`, `spiral_notebook`, `ozalid_blue`, `soviet_green_tint` |
 
-### 8 Iconic Hero Styles
+### 25 Flagship Hero Scribes (`hero_scribes.json`)
+
+Introduced in `v0.1.1`, `hero_scribes.json` provides 25 signature paleographic profiles spanning five centuries of music manuscripts — from Sistine Chapel choirbooks to Hollywood Ozalid film scores and spiral-notebook gel-pen sketches:
+
+| Era / Tradition | Flagship Hero Style IDs |
+|---|---|
+| **Renaissance & Baroque** | `hero_palestrina_sistine_choirbook` · `hero_monteverdi_vespers_quill` · `hero_couperin_versailles_clavecin` · `hero_anna_magdalena_bach_notebook` · `hero_vivaldi_turin_concerto_rush` |
+| **Romantic Fair Copies & Opera** | `hero_mendelssohn_leipzig_fair_copy` · `hero_clara_schumann_concert_part` · `hero_fanny_hensel_berlin_salon` · `hero_rossini_naples_opera_rush` · `hero_berlioz_paris_grand_score` |
+| **Late-Romantic & Impressionist** | `hero_lili_boulanger_prix_de_rome` · `hero_ravel_watchmaker_micro_nib` · `hero_scriabin_ecstatic_pencil` · `hero_mussorgsky_pictures_iron_gall` · `hero_mahler_vienna_blue_crayon` |
+| **20th-Century Modernist & Film** | `hero_stravinsky_morges_fine_pen` · `hero_messiaen_birdsong_cahier` · `hero_crumb_makrokosmos_fineliner` · `hero_john_williams_hollywood_pencil` · `hero_morricone_cinecitta_ink` |
+| **Jazz, Tango & Contemporary** | `hero_monk_angular_lead_sheet` · `hero_bill_evans_jazz_pencil` · `hero_piazzolla_buenos_aires_tango` · `hero_bluenote_van_gelder_ozalid` · `hero_songwriter_spiral_gelpen` |
+
+### 8 Iconic Core Styles
 
 | Style ID | Era & Medium | Signature Paleographic Traits |
 |---|---|---|
@@ -223,7 +236,7 @@ If you use `hw-score-sim` in your research or OMR training pipeline, please cite
   title        = {hw-score-sim: Procedural Handwritten Sheet-Music Rendering Engine},
   author       = {Gregor Eesmaa and hw-score-sim contributors},
   year         = {2026},
-  version      = {0.1.0},
+  version      = {0.1.1},
   license      = {MIT},
   url          = {https://github.com/gregoreesmaa/hw-score-sim}
 }

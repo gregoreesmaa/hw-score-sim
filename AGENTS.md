@@ -6,7 +6,7 @@ Procedural handwritten sheet-music rendering engine (`.musicxml`, `.mxl`, `.mscx
 
 | Path | Responsibility |
 |---|---|
-| `src/hw_score_sim/styles.py` | Scribe style registry: 20 built-in core profiles + auto-discovery of `style_packs/*.json` (159 total), `"extends"` inheritance with cycle detection, `REQUIRED_STYLE_KEYS`, `_NUMERIC_CLAMP_BOUNDS`, `validate_style`, `register_style`, `reload_style_packs`, `interpolate_styles`, `sample_random_scribe`, and archetype tuples (`NOTEHEAD_ARCHETYPES`, `STEM_ARCHETYPES`, `FLAG_ARCHETYPES`, `BEAM_ARCHETYPES`, `BEAM_SLOPE_STYLES`, `BEAM_GROUPING_MODES`, `REST_ARCHETYPES`, `LEDGER_STYLES`, `PAPER_TYPES`). |
+| `src/hw_score_sim/styles.py` | Scribe style registry: 20 built-in core profiles + auto-discovery of `style_packs/*.json` (184 total), `"extends"` inheritance with cycle detection, `REQUIRED_STYLE_KEYS`, `_NUMERIC_CLAMP_BOUNDS`, `validate_style`, `register_style`, `reload_style_packs`, `interpolate_styles`, `sample_random_scribe`, and archetype tuples (`NOTEHEAD_ARCHETYPES`, `STEM_ARCHETYPES`, `FLAG_ARCHETYPES`, `BEAM_ARCHETYPES`, `BEAM_SLOPE_STYLES`, `BEAM_GROUPING_MODES`, `REST_ARCHETYPES`, `LEDGER_STYLES`, `PAPER_TYPES`). |
 | `src/hw_score_sim/stroke_engine.py` | Calligraphic vector-stroke rasterizer: `StrokeCanvas` (float32 RGB in `[0, 1]` with tileable 256×256 paper-tooth grain) and primitives (`draw_calligraphic_polyline`, `draw_filled_blob`, `draw_staff_line`, `draw_rastrum_staff`). Models nib angle/contrast, pressure taper, ink pooling, dry-brush dropout, split-nib, bow wobble, and tremor. |
 | `src/hw_score_sim/glyph_variants.py` | Procedural vector generators for 18 notehead, 18 stem, 20 flag, 14 beam, 10 legacy quarter-rest, and 5 ledger-line archetypes, plus dots, ties, slurs, articulations, hairpins, dynamics, and correction scratches. |
 | `src/hw_score_sim/structural_glyphs.py` | Self-contained registry of 54 structural variants: 18 `CLEF_ARCHETYPES`, 18 `KEYSIG_ARCHETYPES` (key signatures & accidentals), and 18 `BARLINE_ARCHETYPES`, plus `resolve_structural_archetypes`. |
@@ -18,7 +18,7 @@ Procedural handwritten sheet-music rendering engine (`.musicxml`, `.mxl`, `.mscx
 | `src/hw_score_sim/catalog.py` | Faceted 4-axis paleographic index (`era`, `medium`, `implement`, `legibility` 1–5) exposing `filter_styles` and `describe_style` without mutating JSON packs. |
 | `src/hw_score_sim/ml_export.py` | In-memory `RenderSample` & `render_sample` (accepts style names or ephemeral dicts without mutating `SCRIBE_STYLES`), `to_coco_annotations`, `to_yolo_labels`, atomic `export_dataset_sample` (`*.tmp` + `os.replace`), `HandwrittenScoreDataset` (lazy `torch`), and `to_hf_generator`. |
 | `src/hw_score_sim/cli.py` | Entrypoints `hw-score-sim` (`main`) and `hw-score-gallery` (`gallery_main`). |
-| `src/hw_score_sim/style_packs/*.json` | 10 curated JSON packs (139 styles) auto-loaded on import via `reload_style_packs()`. |
+| `src/hw_score_sim/style_packs/*.json` | 11 curated JSON packs (164 styles, including 25 flagship `hero_*` scribes) auto-loaded on import via `reload_style_packs()`. |
 | `examples/` | 4 runnable recipes (`01_time_machine_strip.py`, `02_scribe_morph.py`, `03_infinite_omr_dataset.py`, `04_custom_scribe_from_json.py`) + shared `_sample_score.py`. |
 | `tests/` | 12 `unittest` modules covering styles, pluggable architecture, stroke engine, stroke uniqueness, stems/flags/beams, structural glyphs, rest variants, MuseScore compat, renderer, sampler/catalog, ML export, and example smoke tests. |
 

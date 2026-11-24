@@ -396,7 +396,7 @@ def render_sample(
     try:
         from . import __version__ as pkg_version
     except Exception:
-        pkg_version = "0.1.0"
+        pkg_version = "0.1.1"
 
     meta: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
