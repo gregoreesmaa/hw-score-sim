@@ -84,3 +84,13 @@ hw-score-gallery --mode structural --out-dir gallery/structural
    - `rest_variants.py`: `NEW_QUARTER_REST_ARCHETYPES`, `FLAGGED_REST_ARCHETYPES`, `BAR_REST_ARCHETYPES` (must remain disjoint from legacy `REST_ARCHETYPES`).
 2. Implement purely procedural vector geometry via `StrokeCanvas` primitives, scaled relative to staff space `sp`, honoring `style` nib/wobble/tremor params and per-instance `rng` jitter.
 3. Verify with `python -m unittest discover -s tests -p "test_*.py" -v` (especially `test_stroke_uniqueness.py`, `test_styles.py`, `test_style_architecture.py`) and inspect via `hw-score-gallery`.
+
+## CI & Release Automation
+
+- **CI (`.github/workflows/ci.yml`):** Runs on `push` and `pull_request` to `main` across `ubuntu-latest` and `windows-latest` × Python `3.10`, `3.11`, `3.12`. Installs `-e . build twine`, runs `python -m unittest discover -s tests -p "test_*.py" -v`, builds sdist/wheel (`python -m build`), and checks metadata (`twine check dist/*`).
+- **Release (`.github/workflows/release.yml`):** Triggers on `v*.*.*` tag pushes (and `workflow_dispatch`). Verifies `pyproject.toml` `project.version` matches the tag, runs the full `unittest` suite, builds + verifies `dist/*`, publishes to PyPI via `pypa/gh-action-pypi-publish@release/v1`, and creates a GitHub Release with `dist/*` attached and auto-generated release notes.
+- **PyPI auth:** Configured for **OIDC Trusted Publishing** (zero static secrets; register this repo, workflow `release.yml`, and environment `pypi` as a Trusted Publisher on PyPI). Alternatively, supply a `PYPI_API_TOKEN` secret and uncomment `password: ${{ secrets.PYPI_API_TOKEN }}` in `release.yml`.
+- **Cutting a release:** Bump `version` in `pyproject.toml`, commit on `main`, then run:
+  ```bash
+  git tag vX.Y.Z && git push origin vX.Y.Z
+  ```
