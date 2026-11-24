@@ -219,9 +219,9 @@ Explore the `examples/` directory for end-to-end recipes:
 If you use `hw-score-sim` in your research or OMR training pipeline, please cite:
 
 ```bibtex
-@software{hw_score_sim_2026,
+@software{eesmaa_hw_score_sim_2026,
   title        = {hw-score-sim: Procedural Handwritten Sheet-Music Rendering Engine},
-  author       = {hw-score-sim contributors},
+  author       = {Gregor Eesmaa and hw-score-sim contributors},
   year         = {2026},
   version      = {0.1.0},
   license      = {MIT},
