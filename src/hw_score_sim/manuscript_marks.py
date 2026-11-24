@@ -897,6 +897,8 @@ def apply_post_notation_manuscript_marks(
     style: Dict[str, Any],
     rng: np.random.Generator,
     marks_out: List[Dict[str, Any]],
+    *,
+    clean_paper: bool = False,
 ) -> Dict[str, Any]:
     """Apply all post-notation living-manuscript layers (100% OMR GT safe) and return summary."""
     guard = SafeZoneGuard.from_systems(canvas.width, canvas.height, systems)
@@ -1016,23 +1018,25 @@ def apply_post_notation_manuscript_marks(
                       bbox_xyxy=bbox, tool="scribe_ink", color_rgb=ink_rgb, text=callout, system_index=sys_lay.system_index)
 
     # Layer 5: Wet-Ink Accidents (Ink Blots, Quill Tests, Palm Smears)
-    blot_prob = float(np.clip(style.get("ink_blot_prob", 0.0), 0.0, 1.0))
-    if blot_prob > 0.0 and float(rng.random()) < blot_prob:
-        apply_ink_blot_and_splatter(canvas, guard, style, rng, marks_out)
+    if not clean_paper:
+        blot_prob = float(np.clip(style.get("ink_blot_prob", 0.0), 0.0, 1.0))
+        if blot_prob > 0.0 and float(rng.random()) < blot_prob:
+            apply_ink_blot_and_splatter(canvas, guard, style, rng, marks_out)
 
     quill_prob = float(np.clip(style.get("quill_test_prob", 0.0), 0.0, 1.0))
     if quill_prob > 0.0 and float(rng.random()) < quill_prob:
         apply_quill_test_scribble(canvas, guard, avg_sp, style, rng, marks_out)
 
-    smear_prob = float(np.clip(style.get("palm_smear_prob", 0.0), 0.0, 1.0))
-    if smear_prob > 0.0 and float(rng.random()) < smear_prob:
-        hand = str(style.get("palm_smear_hand") or "random")
-        apply_palm_smear(canvas, hand, style, rng, marks_out)
+    if not clean_paper:
+        smear_prob = float(np.clip(style.get("palm_smear_prob", 0.0), 0.0, 1.0))
+        if smear_prob > 0.0 and float(rng.random()) < smear_prob:
+            hand = str(style.get("palm_smear_hand") or "random")
+            apply_palm_smear(canvas, hand, style, rng, marks_out)
 
-    # Layer 7b: Dog-Ear Corner Fold & Page-Turn Thumb Wear
-    dog_ear_prob = float(np.clip(style.get("dog_ear_prob", 0.0), 0.0, 1.0))
-    if dog_ear_prob > 0.0 and float(rng.random()) < dog_ear_prob:
-        apply_dog_ear_and_thumb_wear(canvas, rng, marks_out)
+        # Layer 7b: Dog-Ear Corner Fold & Page-Turn Thumb Wear
+        dog_ear_prob = float(np.clip(style.get("dog_ear_prob", 0.0), 0.0, 1.0))
+        if dog_ear_prob > 0.0 and float(rng.random()) < dog_ear_prob:
+            apply_dog_ear_and_thumb_wear(canvas, rng, marks_out)
 
     counts_by_layer: Dict[str, int] = {}
     for m in marks_out:

@@ -11,6 +11,7 @@ Pure NumPy + StrokeCanvas primitives with fresh per-instance motor jitter.
 
 from __future__ import annotations
 
+from functools import lru_cache
 import hashlib
 import math
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -179,6 +180,110 @@ def _stable_pick(seed_key: str, choices: Tuple[str, ...]) -> str:
     return choices[int.from_bytes(h[:4], "big") % len(choices)]
 
 
+_EXPRESSIVE_ERA_OVERRIDES: Dict[str, Dict[str, str]] = {
+    "slur_archetype": {
+        "chopin": "high_romantic_dome", "liszt": "high_romantic_dome",
+        "beethoven": "flat_hurried_bridge", "stravinsky": "angular_bracket_tie",
+        "modern": "angular_bracket_tie", "baroque": "hooked_serif_ends",
+        "bach": "heavy_broad_nib_crescent", "jazz": "overshoot_whip_slur",
+        "ellington": "overshoot_whip_slur",
+    },
+    "timesig_archetype": {
+        "baroque": "baroque_quill_florid", "bach": "common_cut_c_symbol",
+        "palestrina": "baroque_quill_florid", "renaissance": "baroque_quill_florid",
+        "classical": "common_cut_c_symbol", "jazz": "jazz_realbook_chisel",
+        "ellington": "jazz_realbook_chisel", "realbook": "jazz_realbook_chisel",
+        "film": "giant_oversized_broadcast", "williams": "giant_oversized_broadcast",
+        "studio": "giant_oversized_broadcast", "chopin": "spindly_tall_compressed",
+        "ravel": "hairline_minimal_pencil", "student": "slashed_fraction_bar",
+        "pencil": "hairline_minimal_pencil", "mahler": "heavy_box_framed_meter",
+    },
+    "dynamic_archetype": {
+        "romantic": "romantic_flourish_swash", "chopin": "romantic_flourish_swash",
+        "beethoven": "beethoven_slashed_bold", "mahler": "underlined_conductor_emph",
+        "jazz": "jazz_block_marker", "ellington": "jazz_block_marker",
+        "realbook": "jazz_block_marker", "baroque": "baroque_spelled_dot",
+        "ravel": "hairline_delicate_salon", "salon": "hairline_delicate_salon",
+        "conductor": "underlined_conductor_emph", "vivaldi": "hurried_scribble_ligature",
+    },
+    "hairpin_archetype": {
+        "chopin": "bowed_curved_arms", "romantic": "bowed_curved_arms",
+        "beethoven": "crossed_overshoot_x", "debussy": "narrow_needle_slit",
+        "ravel": "narrow_needle_slit", "modern": "niente_circle_vertex",
+        "prokofiev": "asymmetric_tilted_wedge", "jazz": "wide_flared_dramatic",
+        "ellington": "wide_flared_dramatic",
+    },
+    "articulation_archetype": {
+        "baroque": "keil_baroque_wedge", "mozart": "keil_baroque_wedge",
+        "bach": "keil_baroque_wedge", "vivaldi": "keil_baroque_wedge",
+        "romantic": "romantic_expressive_trill", "modern": "tent_angular_modern",
+        "stravinsky": "tent_angular_modern", "prokofiev": "tent_angular_modern",
+        "jazz": "heavy_jazz_marker", "realbook": "heavy_jazz_marker",
+        "ellington": "heavy_jazz_marker",
+    },
+    "dot_archetype": {
+        "bach": "diagonal_pen_flick", "vivaldi": "diagonal_pen_flick",
+        "beethoven": "heavy_ink_blot", "mahler": "heavy_ink_blot",
+        "baroque": "diamond_broad_nib", "palestrina": "diamond_broad_nib",
+        "ravel": "tiny_pinprick", "hairline": "tiny_pinprick",
+        "jazz": "horizontal_micro_dash", "ellington": "horizontal_micro_dash",
+    },
+    "tuplet_archetype": {
+        "romantic": "slur_arc_tuplet", "chopin": "slur_arc_tuplet",
+        "modern": "ratio_colon_bracket", "baroque": "numeral_only_bare",
+        "jazz": "slanted_diagonal_hooks", "ellington": "slanted_diagonal_hooks",
+    },
+    "grace_slash_archetype": {
+        "romantic": "steep_whip_slash", "baroque": "curved_hook_cut",
+        "jazz": "double_thick_jazz_cut", "hurried": "horizontal_crossbar",
+    },
+    "arpeggio_archetype": {
+        "modern": "sharp_zigzag_sawtooth", "romantic": "up_arrow_arpeggio",
+        "baroque": "classic_sinusoid_wave",
+    },
+    "courtesy_archetype": {
+        "modern": "square_editorial_brackets", "baroque": "square_editorial_brackets",
+        "chopin": "tall_narrow_parens", "jazz": "wide_heavy_parens",
+    },
+    "brace_archetype": {
+        "baroque": "ornate_double_swash", "palestrina": "ornate_double_swash",
+        "modern": "straight_square_bracket", "mahler": "straight_square_bracket",
+        "jazz": "angular_chevron_brace", "ellington": "angular_chevron_brace",
+        "sketch": "hurried_single_c_arc", "vivaldi": "hurried_single_c_arc",
+    },
+    "volta_archetype": {
+        "jazz": "angled_hook_jazz", "realbook": "angled_hook_jazz",
+        "modern": "closed_box_both_hooks", "sketch": "slanted_roof_hurried",
+    },
+    "multibar_archetype": {
+        "baroque": "church_ladder_bars", "romantic": "slanted_diagonal_bar",
+        "jazz": "thick_marker_block", "modern": "thin_split_line_numeral",
+    },
+}
+
+
+def resolve_expressive_archetype(style: Optional[dict], key: str) -> str:
+    """Resolve a single expressive archetype key without hashing all 13 registries."""
+    st = style or {}
+    reg = EXPRESSIVE_REGISTRIES[key]
+    val = st.get(key)
+    if isinstance(val, str) and val in reg:
+        return val
+    # Physics overrides when no explicit key was supplied
+    if key == "dot_archetype" and key not in st and float(st.get("stroke_scale", 1.0)) <= 0.65:
+        return "tiny_pinprick"
+    if key == "hairpin_archetype" and key not in st and float(st.get("wobble_px", 0.5)) >= 1.4:
+        return "open_vertex_gap"
+    name = str(st.get("name", "")).strip().lower()
+    era = str(st.get("era", "")).strip().lower()
+    for tok, arch in _EXPRESSIVE_ERA_OVERRIDES[key].items():
+        if tok in name or tok in era:
+            return arch
+    if not name:
+        return reg[0]
+    return _stable_pick(f"{name}:{key}", reg)
+
+
 def resolve_expressive_archetypes(style: Optional[dict]) -> Dict[str, str]:
     """Resolve all 13 expressive archetypes deterministically from style metadata.
 
@@ -186,126 +291,35 @@ def resolve_expressive_archetypes(style: Optional[dict]) -> Dict[str, str]:
     cues + deterministic name hash so all 234 existing styles immediately gain
     diverse, era-coherent expressive glyphs with zero breaking changes.
     """
-    st = style or {}
-    name = str(st.get("name", "")).strip().lower()
-    era = str(st.get("era", "")).strip().lower()
-    scale = float(st.get("stroke_scale", 1.0))
-    wobble = float(st.get("wobble_px", 0.5))
-
-    def _pick(key: str, era_overrides: Dict[str, str]) -> str:
-        val = st.get(key)
-        reg = EXPRESSIVE_REGISTRIES[key]
-        if isinstance(val, str) and val in reg:
-            return val
-        for tok, arch in era_overrides.items():
-            if tok in name or tok in era:
-                return arch
-        if not name:
-            return reg[0]
-        return _stable_pick(f"{name}:{key}", reg)
-
-    out = {
-        "slur_archetype": _pick("slur_archetype", {
-            "chopin": "high_romantic_dome", "liszt": "high_romantic_dome",
-            "beethoven": "flat_hurried_bridge", "stravinsky": "angular_bracket_tie",
-            "modern": "angular_bracket_tie", "baroque": "hooked_serif_ends",
-            "bach": "heavy_broad_nib_crescent", "jazz": "overshoot_whip_slur",
-            "ellington": "overshoot_whip_slur",
-        }),
-        "timesig_archetype": _pick("timesig_archetype", {
-            "baroque": "baroque_quill_florid", "bach": "common_cut_c_symbol",
-            "palestrina": "baroque_quill_florid", "renaissance": "baroque_quill_florid",
-            "classical": "common_cut_c_symbol", "jazz": "jazz_realbook_chisel",
-            "ellington": "jazz_realbook_chisel", "realbook": "jazz_realbook_chisel",
-            "film": "giant_oversized_broadcast", "williams": "giant_oversized_broadcast",
-            "studio": "giant_oversized_broadcast", "chopin": "spindly_tall_compressed",
-            "ravel": "hairline_minimal_pencil", "student": "slashed_fraction_bar",
-            "pencil": "hairline_minimal_pencil", "mahler": "heavy_box_framed_meter",
-        }),
-        "dynamic_archetype": _pick("dynamic_archetype", {
-            "romantic": "romantic_flourish_swash", "chopin": "romantic_flourish_swash",
-            "beethoven": "beethoven_slashed_bold", "mahler": "underlined_conductor_emph",
-            "jazz": "jazz_block_marker", "ellington": "jazz_block_marker",
-            "realbook": "jazz_block_marker", "baroque": "baroque_spelled_dot",
-            "ravel": "hairline_delicate_salon", "salon": "hairline_delicate_salon",
-            "conductor": "underlined_conductor_emph", "vivaldi": "hurried_scribble_ligature",
-        }),
-        "hairpin_archetype": _pick("hairpin_archetype", {
-            "chopin": "bowed_curved_arms", "romantic": "bowed_curved_arms",
-            "beethoven": "crossed_overshoot_x", "debussy": "narrow_needle_slit",
-            "ravel": "narrow_needle_slit", "modern": "niente_circle_vertex",
-            "prokofiev": "asymmetric_tilted_wedge", "jazz": "wide_flared_dramatic",
-            "ellington": "wide_flared_dramatic",
-        }),
-        "articulation_archetype": _pick("articulation_archetype", {
-            "baroque": "keil_baroque_wedge", "mozart": "keil_baroque_wedge",
-            "bach": "keil_baroque_wedge", "vivaldi": "keil_baroque_wedge",
-            "romantic": "romantic_expressive_trill", "modern": "tent_angular_modern",
-            "stravinsky": "tent_angular_modern", "prokofiev": "tent_angular_modern",
-            "jazz": "heavy_jazz_marker", "realbook": "heavy_jazz_marker",
-            "ellington": "heavy_jazz_marker",
-        }),
-        "dot_archetype": _pick("dot_archetype", {
-            "bach": "diagonal_pen_flick", "vivaldi": "diagonal_pen_flick",
-            "beethoven": "heavy_ink_blot", "mahler": "heavy_ink_blot",
-            "baroque": "diamond_broad_nib", "palestrina": "diamond_broad_nib",
-            "ravel": "tiny_pinprick", "hairline": "tiny_pinprick",
-            "jazz": "horizontal_micro_dash", "ellington": "horizontal_micro_dash",
-        }),
-        "tuplet_archetype": _pick("tuplet_archetype", {
-            "romantic": "slur_arc_tuplet", "chopin": "slur_arc_tuplet",
-            "modern": "ratio_colon_bracket", "baroque": "numeral_only_bare",
-            "jazz": "slanted_diagonal_hooks", "ellington": "slanted_diagonal_hooks",
-        }),
-        "grace_slash_archetype": _pick("grace_slash_archetype", {
-            "romantic": "steep_whip_slash", "baroque": "curved_hook_cut",
-            "jazz": "double_thick_jazz_cut", "hurried": "horizontal_crossbar",
-        }),
-        "arpeggio_archetype": _pick("arpeggio_archetype", {
-            "modern": "sharp_zigzag_sawtooth", "romantic": "up_arrow_arpeggio",
-            "baroque": "classic_sinusoid_wave",
-        }),
-        "courtesy_archetype": _pick("courtesy_archetype", {
-            "modern": "square_editorial_brackets", "baroque": "square_editorial_brackets",
-            "chopin": "tall_narrow_parens", "jazz": "wide_heavy_parens",
-        }),
-        "brace_archetype": _pick("brace_archetype", {
-            "baroque": "ornate_double_swash", "palestrina": "ornate_double_swash",
-            "modern": "straight_square_bracket", "mahler": "straight_square_bracket",
-            "jazz": "angular_chevron_brace", "ellington": "angular_chevron_brace",
-            "sketch": "hurried_single_c_arc", "vivaldi": "hurried_single_c_arc",
-        }),
-        "volta_archetype": _pick("volta_archetype", {
-            "jazz": "angled_hook_jazz", "realbook": "angled_hook_jazz",
-            "modern": "closed_box_both_hooks", "sketch": "slanted_roof_hurried",
-        }),
-        "multibar_archetype": _pick("multibar_archetype", {
-            "baroque": "church_ladder_bars", "romantic": "slanted_diagonal_bar",
-            "jazz": "thick_marker_block", "modern": "thin_split_line_numeral",
-        }),
-    }
-    # Physics overrides when no explicit key was supplied
-    if "dot_archetype" not in st and scale <= 0.65:
-        out["dot_archetype"] = "tiny_pinprick"
-    if "hairpin_archetype" not in st and wobble >= 1.4:
-        out["hairpin_archetype"] = "open_vertex_gap"
-    return out
+    return {k: resolve_expressive_archetype(style, k) for k in EXPRESSIVE_REGISTRIES}
 
 
 # ---------------------------------------------------------------------------
 # Shared Geometry Helpers
 # ---------------------------------------------------------------------------
 
-def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 20) -> np.ndarray:
+@lru_cache(maxsize=64)
+def _cubic_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     t = np.linspace(0.0, 1.0, n)[:, None]
     mt = 1.0 - t
-    return (mt**3) * p0 + 3.0 * (mt**2) * t * p1 + 3.0 * mt * (t**2) * p2 + (t**3) * p3
+    return mt**3, 3.0 * (mt**2) * t, 3.0 * mt * (t**2), t**3
+
+
+@lru_cache(maxsize=64)
+def _quad_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    mt = 1.0 - t
+    return mt**2, 2.0 * mt * t, t**2
+
+
+def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 20) -> np.ndarray:
+    b0, b1, b2, b3 = _cubic_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2 + b3 * p3
 
 
 def _eval_quad(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int = 12) -> np.ndarray:
-    t = np.linspace(0.0, 1.0, n)[:, None]
-    mt = 1.0 - t
-    return (mt**2) * p0 + 2.0 * mt * t * p1 + (t**2) * p2
+    b0, b1, b2 = _quad_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2
 
 
 def _eval_catmull_rom(ctrl: np.ndarray, samples_per_seg: int = 7) -> np.ndarray:
@@ -357,7 +371,7 @@ def draw_slur_variant(
     sp: float, color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     is_tie: bool = False, archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["slur_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "slur_archetype")
     dx, dy = x1 - x0, y1 - y0
     span = max(sp * 0.8, math.hypot(dx, dy))
     h_base = (min(sp * 1.15, max(sp * 0.55, span * 0.16)) if is_tie
@@ -488,7 +502,7 @@ def draw_time_sig_variant(
     cx: float, cy: float, sp: float, color_rgb: RGBLike,
     style: dict, rng: np.random.Generator, archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["timesig_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "timesig_archetype")
     num_s, den_s = str(num).strip().upper(), str(den).strip().upper()
 
     use_c = num_s in ("C", "COMMON") or (
@@ -553,7 +567,7 @@ def draw_dynamic_variant(
     color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["dynamic_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "dynamic_archetype")
     chars = [c.lower() for c in str(text).strip() if not c.isspace()]
     if not chars:
         return
@@ -623,7 +637,7 @@ def draw_hairpin_variant(
     sp: float, color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["hairpin_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "hairpin_archetype")
     if x1 <= x0 + sp * 0.4:
         x1 = x0 + sp * 2.5
     is_cresc = str(kind).strip().lower() in ("cresc", "crescendo", "<", "open_right")
@@ -665,7 +679,7 @@ def draw_articulation_variant(
     sp: float, color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["articulation_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "articulation_archetype")
     s = -1.0 if above else 1.0
     w = max(0.95, sp * 0.14 * (1.40 if arch == "heavy_jazz_marker" else 1.0))
     cx = cx + float(rng.normal(0.0, 0.02 * sp))
@@ -787,7 +801,7 @@ def draw_augmentation_dot_variant(
     color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["dot_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "dot_archetype")
     cx = cx + float(rng.normal(0.0, 0.025 * sp))
     cy = cy + float(rng.normal(0.0, 0.025 * sp))
     if arch == "tiny_pinprick":
@@ -821,7 +835,7 @@ def draw_tuplet_variant(
     style: dict, rng: np.random.Generator, archetype: Optional[str] = None,
     normal_num: Optional[int] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["tuplet_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "tuplet_archetype")
     w = max(0.9, sp * 0.11)
     hdir = 1.0 if above else -1.0
     hlen = sp * 0.54
@@ -864,7 +878,7 @@ def draw_grace_slash_variant(
     color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["grace_slash_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "grace_slash_archetype")
     w = max(0.85, eff_sp * (0.20 if arch == "double_thick_jazz_cut" else 0.14))
     j = float(rng.normal(0.0, 0.04 * eff_sp))
     if arch == "steep_whip_slash":
@@ -895,7 +909,7 @@ def draw_arpeggio_variant(
     color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["arpeggio_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "arpeggio_archetype")
     h = max(sp * 1.2, abs(y_bot - y_top))
     w = max(0.95, sp * 0.14)
     if arch == "bracket_non_arp_roll":
@@ -925,7 +939,7 @@ def draw_courtesy_brackets_variant(
     color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["courtesy_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "courtesy_archetype")
     px_off = sp * (0.88 if is_double_flat else 0.64) * (1.15 if arch == "wide_heavy_parens" else 1.0)
     ph = sp * (1.05 if arch == "tall_narrow_parens" else 0.56 if arch == "hurried_c_ticks" else 0.82)
     pw = sp * (0.16 if arch == "tall_narrow_parens" else 0.26)
@@ -956,7 +970,7 @@ def draw_brace_variant(
         elif legacy in ("baroque_double_quill_accolade",):
             arch = "ornate_double_swash"
         else:
-            arch = resolve_expressive_archetypes(style)["brace_archetype"]
+            arch = resolve_expressive_archetype(style, "brace_archetype")
 
     h, ym = max(sp, abs(y_bot - y_top)), 0.5 * (y_top + y_bot)
     w_scale = float(np.clip(style.get("brace_width_scale", 1.0), 0.55, 1.90))
@@ -993,7 +1007,7 @@ def draw_volta_variant(
     color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     text_fn: Callable[..., Any], archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["volta_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "volta_archetype")
     w = max(1.0, sp * (0.16 if arch == "angled_hook_jazz" else 0.12))
     hh = sp * 1.15
     y_r = y_top + (sp * float(rng.uniform(-0.22, 0.22)) if arch == "slanted_roof_hurried" else 0.0)
@@ -1013,7 +1027,7 @@ def draw_multibar_rest_variant(
     color_rgb: RGBLike, style: dict, rng: np.random.Generator,
     archetype: Optional[str] = None,
 ) -> None:
-    arch = archetype or resolve_expressive_archetypes(style)["multibar_archetype"]
+    arch = archetype or resolve_expressive_archetype(style, "multibar_archetype")
     pad = max(sp * 0.9, (x1 - x0) * 0.18)
     rx0, rx1 = x0 + pad, max(x0 + pad + sp * 1.5, x1 - pad)
     xm = 0.5 * (rx0 + rx1)

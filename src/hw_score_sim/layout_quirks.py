@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
+from PIL import Image
 
 PAPER_TYPES: tuple[str, ...] = (
     "aged_rag",
@@ -30,25 +31,13 @@ _PAPER_TYPE_TINTS: dict[str, tuple[float, float, float]] = {
 
 
 def _bilinear_upsample(grid: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
-    """Bilinearly upsample a 2D float32 array to (out_h, out_w) using pure NumPy."""
+    """Bilinearly upsample a 2D float32 array to (out_h, out_w) via Pillow float32 resize."""
     in_h, in_w = grid.shape
     if in_h == 1 and in_w == 1:
         return np.full((out_h, out_w), float(grid[0, 0]), dtype=np.float32)
-
-    y = np.linspace(0.0, max(in_h - 1, 0), out_h, dtype=np.float32)
-    x = np.linspace(0.0, max(in_w - 1, 0), out_w, dtype=np.float32)
-
-    y0 = np.floor(y).astype(np.int32)
-    x0 = np.floor(x).astype(np.int32)
-    y1 = np.minimum(y0 + 1, in_h - 1)
-    x1 = np.minimum(x0 + 1, in_w - 1)
-
-    wy = (y - y0)[:, None]
-    wx = (x - x0)[None, :]
-
-    top = grid[y0][:, x0] * (1.0 - wx) + grid[y0][:, x1] * wx
-    bot = grid[y1][:, x0] * (1.0 - wx) + grid[y1][:, x1] * wx
-    return (top * (1.0 - wy) + bot * wy).astype(np.float32, copy=False)
+    pil_in = Image.fromarray(np.ascontiguousarray(grid, dtype=np.float32), mode="F")
+    pil_out = pil_in.resize((int(out_w), int(out_h)), Image.BILINEAR)
+    return np.asarray(pil_out, dtype=np.float32)
 
 
 def make_manuscript_paper(
@@ -95,13 +84,14 @@ def make_manuscript_paper(
 
     # 1. Laid paper grain (fine fiber noise + subtle horizontal laid lines)
     if paper_grain > 0.0:
-        fine_noise = rng.normal(0.0, paper_grain * 0.42, size=(height, width)).astype(np.float32)
+        fine_noise = rng.standard_normal((height, width), dtype=np.float32)
+        fine_noise *= np.float32(paper_grain * 0.42)
         laid_period = float(rng.uniform(5.0, 9.0))
         y_idx = np.arange(height, dtype=np.float32)
         laid_wave = np.sin(2.0 * np.pi * y_idx / laid_period + float(rng.uniform(0.0, 2.0 * np.pi)))
         laid_1d = (laid_wave * (paper_grain * 0.16)).astype(np.float32)
-        grain_field = fine_noise + laid_1d[:, None]
-        img += grain_field[:, :, None]
+        fine_noise += laid_1d[:, None]
+        img += fine_noise[:, :, None]
 
     # 2. Multi-scale mottling & foxing
     if paper_mottle > 0.0:
@@ -222,19 +212,21 @@ def make_manuscript_paper(
                 img[:, margin_x : margin_x + 2, :] * 0.68 + margin_rgb[None, None, :] * 0.32
             )
         # Subtle spiral-binding punch holes along far-left edge
-        hole_x = max(4, int(round(width * 0.025)))
-        hole_r = max(2.5, min(width, height) * 0.012)
-        hole_step = max(18, int(round(height / 18.0)))
-        yy_h, xx_h = np.ogrid[:height, :width]
-        for yh in range(hole_step // 2, height - hole_step // 2, hole_step):
-            y0 = max(0, int(yh - hole_r - 2))
-            y1 = min(height, int(yh + hole_r + 3))
-            x0 = max(0, int(hole_x - hole_r - 2))
-            x1 = min(width, int(hole_x + hole_r + 3))
-            if y1 > y0 and x1 > x0:
-                d = np.hypot((yy_h[y0:y1, :] - yh).astype(np.float32), (xx_h[:, x0:x1] - hole_x).astype(np.float32))
-                mask = np.clip(hole_r + 0.5 - d, 0.0, 1.0)[..., None]
-                img[y0:y1, x0:x1, :] = img[y0:y1, x0:x1, :] * (1.0 - 0.72 * mask) + np.float32(0.22) * (0.72 * mask)
+        # (skip when paper_binding_mode == 'wire_spiral_left' draws the wire-spiral holes below)
+        if str(style.get("paper_binding_mode") or "none").strip().lower() != "wire_spiral_left":
+            hole_x = max(4, int(round(width * 0.025)))
+            hole_r = max(2.5, min(width, height) * 0.012)
+            hole_step = max(18, int(round(height / 18.0)))
+            yy_h, xx_h = np.ogrid[:height, :width]
+            for yh in range(hole_step // 2, height - hole_step // 2, hole_step):
+                y0 = max(0, int(yh - hole_r - 2))
+                y1 = min(height, int(yh + hole_r + 3))
+                x0 = max(0, int(hole_x - hole_r - 2))
+                x1 = min(width, int(hole_x + hole_r + 3))
+                if y1 > y0 and x1 > x0:
+                    d = np.hypot((yy_h[y0:y1, :] - yh).astype(np.float32), (xx_h[:, x0:x1] - hole_x).astype(np.float32))
+                    mask = np.clip(hole_r + 0.5 - d, 0.0, 1.0)[..., None]
+                    img[y0:y1, x0:x1, :] = img[y0:y1, x0:x1, :] * (1.0 - 0.72 * mask) + np.float32(0.22) * (0.72 * mask)
 
     # 7. Optional coffee / water ring stain (capillary darker rim + faint tinted interior)
     if stain_prob > 0.0 and float(rng.random()) < stain_prob:

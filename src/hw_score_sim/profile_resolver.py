@@ -52,11 +52,16 @@ def _jitter(base: float, lo: float, hi: float, span: float, domain: str, name: s
     return float(np.clip(base + (_u01(domain, name, era) - 0.5) * span, lo, hi))
 
 
-def resolve_page_and_expressive_profile(style: Dict[str, Any]) -> Dict[str, Any]:
+def resolve_page_and_expressive_profile(
+    style: Dict[str, Any],
+    *,
+    clean_paper: bool = False,
+) -> Dict[str, Any]:
     """Derive a complete, deterministic Layers 1–4 profile for any style dict.
 
     Returns a new dict containing all resolved v0.3.0 keys; explicit non-None keys
-    present in ``style`` always take precedence.
+    present in ``style`` always take precedence (except paper/wear keys when
+    ``clean_paper=True``).
     """
     st = style or {}
     name = str(st.get("name", "unnamed"))
@@ -337,5 +342,16 @@ def resolve_page_and_expressive_profile(style: Dict[str, Any]) -> Dict[str, Any]
     _set("chord_x_stagger_sp", float(np.clip(0.18 * chaos, 0.0, 0.24)))
     _set("accidental_x_offset_sp", _jitter(1.25, 1.02, 1.55, 0.24, "accoff", name, raw_era))
     _set("accidental_x_jitter_sp", float(np.clip(0.20 * chaos, 0.0, 0.28)))
+
+    if clean_paper:
+        resolved["paper_binding_mode"] = "none"
+        resolved["paper_background_grid"] = "none"
+        resolved["paper_border_mode"] = "none"
+        resolved["verso_bleed_strength"] = 0.0
+        resolved["fold_crease_prob"] = 0.0
+        resolved["foxing_cluster_prob"] = 0.0
+        resolved["ink_blot_prob"] = 0.0
+        resolved["palm_smear_prob"] = 0.0
+        resolved["dog_ear_prob"] = 0.0
 
     return resolved

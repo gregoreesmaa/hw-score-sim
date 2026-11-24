@@ -95,6 +95,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--page-w", type=int, default=1650, help="Output page width in pixels")
     parser.add_argument("--page-h", type=int, default=2200, help="Output page height in pixels")
     parser.add_argument(
+        "--clean-paper",
+        action="store_true",
+        help="Render pure handwritten ink on flat white paper, skipping paper aging/textures and wet-ink/wear accidents",
+    )
+    parser.add_argument(
         "--list-styles",
         action="store_true",
         help="Print all registered handwritten style names and exit",
@@ -129,6 +134,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 page_w=args.page_w,
                 page_h=args.page_h,
                 export_train_dir=args.export_train_dir,
+                clean_paper=args.clean_paper,
             )
         except KeyError:
             all_known = styles.list_styles()

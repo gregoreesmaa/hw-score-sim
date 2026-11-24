@@ -8,8 +8,9 @@ and multi-archetype polymorphism.
 
 from __future__ import annotations
 
+from functools import lru_cache
 import math
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -103,16 +104,28 @@ _LEGACY_CLEF_ARCHETYPE_MAP: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 16) -> np.ndarray:
+@lru_cache(maxsize=64)
+def _cubic_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     t = np.linspace(0.0, 1.0, n)[:, None]
     mt = 1.0 - t
-    return (mt**3) * p0 + 3.0 * (mt**2) * t * p1 + 3.0 * mt * (t**2) * p2 + (t**3) * p3
+    return mt**3, 3.0 * (mt**2) * t, 3.0 * mt * (t**2), t**3
+
+
+@lru_cache(maxsize=64)
+def _quad_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    mt = 1.0 - t
+    return mt**2, 2.0 * mt * t, t**2
+
+
+def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 16) -> np.ndarray:
+    b0, b1, b2, b3 = _cubic_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2 + b3 * p3
 
 
 def _eval_quad(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int = 12) -> np.ndarray:
-    t = np.linspace(0.0, 1.0, n)[:, None]
-    mt = 1.0 - t
-    return (mt**2) * p0 + 2.0 * mt * t * p1 + (t**2) * p2
+    b0, b1, b2 = _quad_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2
 
 
 def _eval_catmull_rom(ctrl: np.ndarray, samples_per_seg: int = 10) -> np.ndarray:
@@ -2319,73 +2332,6 @@ def draw_key_sig(
 # ---------------------------------------------------------------------------
 # Time Signatures & Handwritten Numerals
 # ---------------------------------------------------------------------------
-
-
-def _draw_handwritten_digit(
-    canvas: StrokeCanvas,
-    digit: str,
-    cx: float,
-    cy: float,
-    sp: float,
-    color_rgb: RGBLike,
-    style: dict,
-    rng: np.random.Generator,
-) -> None:
-    """Draw a single hand-drawn numeral ('0'..'9', 'C', 'cut') centered at (cx, cy)."""
-    w = max(1.1, sp * float(style.get("timesig_stroke_ratio", 0.21)))
-
-    def _draw_norm(ctrl: np.ndarray, smooth: bool = True, width_mult: float = 1.0) -> None:
-        pts = _transform_local(ctrl, cx, cy, sp, rng, style, jitter_sp=0.07, scale_x_range=(0.86, 1.14), scale_y_range=(0.88, 1.12))
-        path = _eval_catmull_rom(pts, 7) if (smooth and len(pts) >= 3) else pts
-        draw_calligraphic_polyline(canvas, path, color_rgb, w * width_mult, style, kind="timesig")
-
-    if digit == "0":
-        phis = np.linspace(-0.2, 2.0 * math.pi + 0.15, 18)
-        ctrl = np.column_stack((0.52 * np.cos(phis), 0.85 * np.sin(phis)))
-        _draw_norm(ctrl, smooth=False)
-    elif digit == "1":
-        _draw_norm(np.array([[-0.22, -0.58], [0.05, -0.88], [0.02, 0.88]]), smooth=False)
-        if rng.random() < 0.5:
-            _draw_norm(np.array([[-0.26, 0.88], [0.28, 0.86]]), smooth=False, width_mult=0.85)
-    elif digit == "2":
-        ctrl = np.array([[-0.42, -0.52], [-0.08, -0.88], [0.42, -0.68], [0.36, -0.10], [-0.46, 0.84], [0.48, 0.82]])
-        _draw_norm(ctrl, smooth=True)
-    elif digit == "3":
-        ctrl = np.array([[-0.38, -0.68], [0.10, -0.90], [0.42, -0.45], [-0.05, -0.02], [0.46, 0.42], [0.12, 0.90], [-0.44, 0.68]])
-        _draw_norm(ctrl, smooth=True)
-    elif digit == "4":
-        if rng.random() < 0.55:
-            # Closed classic 4.
-            _draw_norm(np.array([[0.22, -0.88], [-0.46, 0.24], [0.48, 0.20]]), smooth=False)
-            _draw_norm(np.array([[0.22, -0.86], [0.18, 0.88]]), smooth=False)
-        else:
-            # Open handwritten 4.
-            _draw_norm(np.array([[-0.32, -0.84], [-0.40, 0.18], [0.46, 0.16]]), smooth=False)
-            _draw_norm(np.array([[0.26, -0.86], [0.20, 0.88]]), smooth=False)
-    elif digit == "5":
-        _draw_norm(np.array([[0.42, -0.84], [-0.34, -0.82], [-0.38, -0.10]]), smooth=False)
-        _draw_norm(np.array([[-0.38, -0.10], [0.26, -0.16], [0.46, 0.40], [0.06, 0.88], [-0.42, 0.68]]), smooth=True)
-    elif digit == "6":
-        ctrl = np.array([[0.32, -0.86], [-0.28, -0.45], [-0.46, 0.35], [-0.02, 0.88], [0.44, 0.46], [0.16, -0.06], [-0.38, 0.24]])
-        _draw_norm(ctrl, smooth=True)
-    elif digit == "7":
-        _draw_norm(np.array([[-0.44, -0.82], [0.44, -0.86], [-0.14, 0.88]]), smooth=False)
-        if rng.random() < 0.35:
-            _draw_norm(np.array([[-0.22, 0.02], [0.34, -0.02]]), smooth=False, width_mult=0.8)
-    elif digit == "8":
-        ctrl = np.array([
-            [0.02, -0.86], [-0.40, -0.48], [0.02, -0.04], [0.44, 0.44],
-            [0.00, 0.88], [-0.44, 0.46], [-0.02, -0.02], [0.40, -0.48], [0.02, -0.86],
-        ])
-        _draw_norm(ctrl, smooth=True)
-    elif digit == "9":
-        ctrl = np.array([[0.34, -0.22], [0.02, -0.88], [-0.44, -0.46], [-0.02, 0.04], [0.38, -0.28], [0.22, 0.48], [-0.22, 0.88]])
-        _draw_norm(ctrl, smooth=True)
-    elif digit in ("C", "CUT"):
-        ctrl = np.array([[0.48, -0.68], [0.02, -0.96], [-0.52, -0.42], [-0.52, 0.42], [0.04, 0.96], [0.50, 0.66]])
-        _draw_norm(ctrl, smooth=True, width_mult=1.15)
-        if digit == "CUT":
-            _draw_norm(np.array([[0.04, -1.35], [-0.04, 1.35]]), smooth=False, width_mult=0.95)
 
 
 def draw_time_sig(

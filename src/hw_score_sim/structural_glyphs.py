@@ -15,9 +15,10 @@ them directly. All rendering uses `stroke_engine.py` primitives (`StrokeCanvas`,
 
 from __future__ import annotations
 
+from functools import lru_cache
 import hashlib
 import math
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -134,16 +135,28 @@ def _resolve_ink_rgb(style: Optional[dict], color_rgb: Optional[RGBLike] = None)
     return (0.10, 0.10, 0.12)
 
 
-def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 16) -> np.ndarray:
+@lru_cache(maxsize=64)
+def _cubic_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     t = np.linspace(0.0, 1.0, n)[:, None]
     mt = 1.0 - t
-    return (mt**3) * p0 + 3.0 * (mt**2) * t * p1 + 3.0 * mt * (t**2) * p2 + (t**3) * p3
+    return mt**3, 3.0 * (mt**2) * t, 3.0 * mt * (t**2), t**3
+
+
+@lru_cache(maxsize=64)
+def _quad_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    mt = 1.0 - t
+    return mt**2, 2.0 * mt * t, t**2
+
+
+def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 16) -> np.ndarray:
+    b0, b1, b2, b3 = _cubic_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2 + b3 * p3
 
 
 def _eval_quad(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int = 12) -> np.ndarray:
-    t = np.linspace(0.0, 1.0, n)[:, None]
-    mt = 1.0 - t
-    return (mt**2) * p0 + 2.0 * mt * t * p1 + (t**2) * p2
+    b0, b1, b2 = _quad_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2
 
 
 def _eval_catmull_rom(ctrl: np.ndarray, samples_per_seg: int = 8) -> np.ndarray:

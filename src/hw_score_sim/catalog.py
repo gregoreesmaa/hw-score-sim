@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Optional, Union
 
+from . import styles as _styles_mod
 from .styles import (
     NOTEHEAD_ARCHETYPES,
     PAPER_TYPES,
@@ -22,6 +23,9 @@ from .styles import (
     get_style,
     list_styles,
 )
+
+_DESCRIBE_CACHE_VERSION: int = -1
+_DESCRIBE_CACHE: dict[str, tuple[int, dict[str, Any]]] = {}
 
 CANONICAL_ERAS: tuple[str, ...] = (
     "renaissance",
@@ -575,11 +579,24 @@ def score_legibility(style: dict[str, Any]) -> int:
     return 5
 
 
-def describe_style(name: str) -> dict[str, Any]:
-    """Return a structured 4-axis catalog description for a registered style name."""
-    style = get_style(name)
-    tier = score_legibility(style)
-    return {
+def _describe_style_cached(name: str) -> dict[str, Any]:
+    """Return cached 4-axis catalog description without copying (internal use)."""
+    global _DESCRIBE_CACHE_VERSION
+    ver = _styles_mod._REGISTRY_VERSION
+    if ver != _DESCRIBE_CACHE_VERSION:
+        _DESCRIBE_CACHE.clear()
+        _DESCRIBE_CACHE_VERSION = ver
+    if name not in SCRIBE_STYLES:
+        # Delegate to get_style for the standard KeyError message.
+        get_style(name)
+    style = SCRIBE_STYLES[name]
+    obj_id = id(style)
+    entry = _DESCRIBE_CACHE.get(name)
+    if entry is not None and entry[0] == obj_id:
+        return entry[1]
+    score = compute_legibility_score(style)
+    tier = 1 if score < 0.18 else (2 if score < 0.27 else (3 if score < 0.37 else (4 if score < 0.49 else 5)))
+    desc = {
         "name": style["name"],
         "description": style["description"],
         "raw_era": style["era"],
@@ -588,11 +605,21 @@ def describe_style(name: str) -> dict[str, Any]:
         "implement": classify_implement(style),
         "legibility": tier,
         "legibility_label": LEGIBILITY_LABELS[tier],
-        "legibility_score": compute_legibility_score(style),
+        "legibility_score": score,
         "paper_type": infer_paper_type(style),
         "notehead_archetype": style["notehead_archetype"],
         "tags": list(style.get("tags", ())),
     }
+    _DESCRIBE_CACHE[name] = (obj_id, desc)
+    return desc
+
+
+def describe_style(name: str) -> dict[str, Any]:
+    """Return a structured 4-axis catalog description for a registered style name."""
+    cached = _describe_style_cached(name)
+    out = dict(cached)
+    out["tags"] = list(cached["tags"])
+    return out
 
 
 def _normalize_enum_filter(
@@ -686,7 +713,7 @@ def filter_styles(
     matched: list[str] = []
     for name in list_styles():
         style = SCRIBE_STYLES[name]
-        desc = describe_style(name)
+        desc = _describe_style_cached(name)
         if era_set is not None and desc["era"] not in era_set:
             continue
         if medium_set is not None and desc["medium"] not in medium_set:

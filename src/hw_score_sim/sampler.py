@@ -16,7 +16,6 @@ Provides:
 
 from __future__ import annotations
 
-import copy
 import hashlib
 from typing import Any, Optional, Sequence
 
@@ -26,6 +25,7 @@ from .catalog import filter_styles
 from .styles import (
     PAPER_TYPES,
     _NUMERIC_CLAMP_BOUNDS,
+    _copy_style_dict,
     list_styles,
     sample_random_scribe,
     validate_style,
@@ -214,21 +214,21 @@ def apply_ink_and_paper(
     if not isinstance(style, dict):
         raise TypeError(f"style must be a dict, got {type(style).__name__}")
 
-    out = copy.deepcopy(style)
+    out = _copy_style_dict(style)
     suffix_parts: list[str] = []
 
     if ink is not None:
         if ink not in INK_PRESETS:
             valid = ", ".join(INK_PRESETS.keys())
             raise KeyError(f"Unknown ink preset {ink!r}. Valid presets: {valid}")
-        out.update(copy.deepcopy(INK_PRESETS[ink]))
+        out.update(INK_PRESETS[ink])
         suffix_parts.append(f"ink={ink}")
 
     if paper is not None:
         if paper not in PAPER_PRESETS:
             valid = ", ".join(PAPER_PRESETS.keys())
             raise KeyError(f"Unknown paper preset {paper!r}. Valid presets: {valid}")
-        out.update(copy.deepcopy(PAPER_PRESETS[paper]))
+        out.update(PAPER_PRESETS[paper])
         suffix_parts.append(f"paper={paper}")
 
     base_name = str(out.get("name", "custom_style"))
@@ -434,10 +434,11 @@ def _interpolate_envelope(difficulty: float) -> tuple[float, float, dict[str, tu
 
 def _clamp_style_to_bounds(style: dict[str, Any], bounds: dict[str, tuple[float, float]]) -> dict[str, Any]:
     """Clamp all present numeric style keys into ``bounds`` and validate."""
-    out = copy.deepcopy(style)
+    out = _copy_style_dict(style)
     for key, (lo, hi) in bounds.items():
         if key in out and out[key] is not None:
-            out[key] = float(np.clip(float(out[key]), lo, hi))
+            v = float(out[key])
+            out[key] = lo if v < lo else (hi if v > hi else v)
     return validate_style(out, name=str(out.get("name", "sampled_style")))
 
 

@@ -30,6 +30,20 @@ from .structural_glyphs import (
 )
 
 STYLE_PACKS_DIR: Path = Path(__file__).resolve().parent / "style_packs"
+_REGISTRY_VERSION: int = 0
+
+
+def _copy_style_dict(spec: dict[str, Any]) -> dict[str, Any]:
+    """Fast shallow+nested copy for style dicts (avoids expensive copy.deepcopy)."""
+    out = dict(spec)
+    for k, v in out.items():
+        if isinstance(v, dict):
+            out[k] = dict(v)
+        elif isinstance(v, list):
+            out[k] = list(v)
+        elif isinstance(v, set):
+            out[k] = set(v)
+    return out
 
 REST_ARCHETYPES: tuple[str, ...] = (
     "lightning_z",
@@ -1344,7 +1358,7 @@ def _normalize_rest_weights(raw_weights: dict[str, Any]) -> dict[str, float]:
 
 def _merge_style_dicts(parent: dict[str, Any], child: dict[str, Any]) -> dict[str, Any]:
     """Deep-merge child style overrides onto a copy of parent."""
-    merged = copy.deepcopy(parent)
+    merged = _copy_style_dict(parent)
     for key, val in child.items():
         if key == "extends":
             continue
@@ -1353,8 +1367,12 @@ def _merge_style_dicts(parent: dict[str, Any], child: dict[str, Any]) -> dict[st
             combined = dict(merged[key])
             combined.update(val)
             merged[key] = combined
+        elif isinstance(val, dict):
+            merged[key] = dict(val)
+        elif isinstance(val, list):
+            merged[key] = list(val)
         else:
-            merged[key] = copy.deepcopy(val)
+            merged[key] = val
     return merged
 
 
@@ -1365,7 +1383,7 @@ def _validate_and_normalize_style(name: str, spec: dict[str, Any]) -> dict[str, 
     if not isinstance(spec, dict):
         raise ValueError(f"Style spec for {name!r} must be a dict")
 
-    out = copy.deepcopy(spec)
+    out = _copy_style_dict(spec)
     out.pop("extends", None)
     out["name"] = name
 
@@ -1469,7 +1487,8 @@ def _validate_and_normalize_style(name: str, spec: dict[str, Any]) -> dict[str, 
 
     for key, (lo, hi) in _NUMERIC_CLAMP_BOUNDS.items():
         if key in out and out[key] is not None:
-            out[key] = float(np.clip(out[key], lo, hi))
+            v = out[key]
+            out[key] = lo if v < lo else (hi if v > hi else v)
 
     return out
 
@@ -1487,23 +1506,26 @@ def register_style(
     overwrite: bool = True,
 ) -> dict[str, Any]:
     """Validate, resolve optional ``extends`` inheritance, and register a scribe style."""
+    global _REGISTRY_VERSION
     if not overwrite and name in SCRIBE_STYLES:
         raise ValueError(f"Style {name!r} is already registered")
     if not isinstance(spec, dict):
         raise ValueError(f"Style spec for {name!r} must be a dict")
 
-    resolved = copy.deepcopy(spec)
-    parent_name = resolved.get("extends")
+    parent_name = spec.get("extends")
     if parent_name is not None:
         if parent_name == name:
             raise ValueError(f"Style {name!r} cannot extend itself")
         if parent_name not in SCRIBE_STYLES:
             raise ValueError(f"Style {name!r} extends unknown parent style {parent_name!r}")
-        resolved = _merge_style_dicts(SCRIBE_STYLES[parent_name], resolved)
+        resolved = _merge_style_dicts(SCRIBE_STYLES[parent_name], spec)
+    else:
+        resolved = spec
 
     validated = _validate_and_normalize_style(name, resolved)
     SCRIBE_STYLES[name] = validated
-    return copy.deepcopy(validated)
+    _REGISTRY_VERSION += 1
+    return _copy_style_dict(validated)
 
 
 def _extract_pack_entries(payload: Any, source_path: Path) -> dict[str, dict[str, Any]]:
@@ -1549,9 +1571,12 @@ def reload_style_packs(
     with circular-inheritance detection and full ``REQUIRED_STYLE_KEYS`` validation.
     Returns the list of style names loaded from disk.
     """
+    global _REGISTRY_VERSION
     if reset_to_builtins:
         SCRIBE_STYLES.clear()
-        SCRIBE_STYLES.update(copy.deepcopy(_BUILTIN_STYLES))
+        for k, v in _BUILTIN_STYLES.items():
+            SCRIBE_STYLES[k] = _copy_style_dict(v)
+        _REGISTRY_VERSION += 1
 
     target_dir = Path(packs_dir) if packs_dir is not None else STYLE_PACKS_DIR
     if not target_dir.exists() or not target_dir.is_dir():
@@ -1563,7 +1588,7 @@ def reload_style_packs(
             payload = json.load(fh)
         entries = _extract_pack_entries(payload, json_path)
         for style_name, spec in entries.items():
-            pending[style_name] = copy.deepcopy(spec)
+            pending[style_name] = spec
 
     if not pending:
         return []
@@ -1622,12 +1647,14 @@ def list_styles(tag: Optional[str] = None) -> list[str]:
     return matched
 
 
-def get_style(name: str) -> dict[str, Any]:
-    """Return a deep copy of the named scribe style dictionary."""
+def get_style(name: Union[str, dict[str, Any]]) -> dict[str, Any]:
+    """Return an independent copy of a named scribe style or a provided style dict."""
+    if isinstance(name, dict):
+        return _copy_style_dict(name)
     if name not in SCRIBE_STYLES:
         valid = ", ".join(SCRIBE_STYLES.keys())
         raise KeyError(f"Unknown scribe style {name!r}. Valid styles: {valid}")
-    return copy.deepcopy(SCRIBE_STYLES[name])
+    return _copy_style_dict(SCRIBE_STYLES[name])
 
 
 def interpolate_styles(
@@ -1646,8 +1673,8 @@ def interpolate_styles(
     if not (0.0 <= t <= 1.0):
         raise ValueError(f"alpha must be in [0.0, 1.0], got {alpha}")
 
-    sa = get_style(name_a) if isinstance(name_a, str) else copy.deepcopy(name_a)
-    sb = get_style(name_b) if isinstance(name_b, str) else copy.deepcopy(name_b)
+    sa = get_style(name_a)
+    sb = get_style(name_b)
     label_a = str(sa.get("name", "style_a"))
     label_b = str(sb.get("name", "style_b"))
 
@@ -1656,7 +1683,7 @@ def interpolate_styles(
             return bool(rng.random() < t)
         return t >= 0.5
 
-    out = copy.deepcopy(sa if t < 0.5 else sb)
+    out = _copy_style_dict(sa if t < 0.5 else sb)
     out["name"] = f"{label_a}__x{t:.2f}__{label_b}"
     out["description"] = f"Interpolated scribe ({1.0 - t:.2f} {label_a} + {t:.2f} {label_b})."
     out["era"] = sb["era"] if _pick_b() else sa["era"]
@@ -1768,7 +1795,7 @@ def sample_random_scribe(
     elif isinstance(base_style, str):
         scribe = get_style(base_style)
     else:
-        scribe = copy.deepcopy(base_style)
+        scribe = _copy_style_dict(base_style)
 
     # Jitter RGB channels gently within [0, 1].
     if j > 0.0:

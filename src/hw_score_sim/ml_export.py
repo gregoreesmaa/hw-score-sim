@@ -16,10 +16,8 @@ import copy
 import gc
 import hashlib
 import json
-import math
 import os
 import tempfile
-import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,8 +41,6 @@ COCO_CATEGORIES: Tuple[Dict[str, Any], ...] = (
     {"id": 1, "name": "system", "supercategory": "music_layout"},
     {"id": 2, "name": "staff", "supercategory": "music_layout"},
 )
-
-_EPHEMERAL_STYLE_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +277,7 @@ def render_sample(
     page_w: int = 1650,
     page_h: int = 2200,
     include_musicxml: bool = True,
+    clean_paper: bool = False,
 ) -> RenderSample:
     """Render a score in memory and return a `RenderSample` with schema-1.0 GT metadata.
 
@@ -298,16 +295,17 @@ def render_sample(
     include_musicxml:
         When True, generates pure-Python per-system MusicXML 3.1 strings via
         `export_score_to_musicxml`.
+    clean_paper:
+        When True, renders pure handwritten ink on flat white `[1.0, 1.0, 1.0]` paper,
+        skipping manuscript paper textures and wet-ink/wear accidents.
     """
     if isinstance(scribe, str):
         display_name = scribe
         resolved_style = styles.get_style(scribe)
-        ephemeral_key: Optional[str] = None
-        render_style_name = scribe
+        render_style: Union[str, Dict[str, Any]] = scribe
     elif isinstance(scribe, dict):
         display_name, resolved_style = _resolve_custom_style(scribe)
-        ephemeral_key = f"__hw_ephemeral_{uuid.uuid4().hex}__"
-        render_style_name = ephemeral_key
+        render_style = resolved_style
     else:
         raise TypeError(f"scribe must be a style name (str) or style dict, got {type(scribe).__name__}")
 
@@ -316,32 +314,16 @@ def render_sample(
         fs_score_path, source_label, parsed_score = _materialize_score_input(score_path_or_xml, tmp_dir)
         out_png = tmp_dir / "render.png"
 
-        if ephemeral_key is not None:
-            with _EPHEMERAL_STYLE_LOCK:
-                styles.SCRIBE_STYLES[ephemeral_key] = copy.deepcopy(resolved_style)
-            try:
-                raw_gt = renderer.render_score_handwritten(
-                    score_path=fs_score_path,
-                    style_name=render_style_name,
-                    out_png=out_png,
-                    seed=int(seed),
-                    page_w=int(page_w),
-                    page_h=int(page_h),
-                    export_train_dir=None,
-                )
-            finally:
-                with _EPHEMERAL_STYLE_LOCK:
-                    styles.SCRIBE_STYLES.pop(ephemeral_key, None)
-        else:
-            raw_gt = renderer.render_score_handwritten(
-                score_path=fs_score_path,
-                style_name=render_style_name,
-                out_png=out_png,
-                seed=int(seed),
-                page_w=int(page_w),
-                page_h=int(page_h),
-                export_train_dir=None,
-            )
+        raw_gt = renderer.render_score_handwritten(
+            score_path=fs_score_path,
+            style_name=render_style,
+            out_png=out_png,
+            seed=int(seed),
+            page_w=int(page_w),
+            page_h=int(page_h),
+            export_train_dir=None,
+            clean_paper=bool(clean_paper),
+        )
 
         # Load PIL image cleanly into memory before temp directory cleanup
         with Image.open(out_png) as opened:
@@ -639,7 +621,7 @@ def _atomic_save_png(path: Path, image: Image.Image) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _atomic_tmp_path(path)
     try:
-        image.save(tmp, format="PNG")
+        image.save(tmp, format="PNG", compress_level=1)
         os.replace(tmp, path)
     except Exception:
         if tmp.exists():

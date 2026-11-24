@@ -11,15 +11,13 @@ optional cropped per-system PNG + MusicXML training export.
 
 from __future__ import annotations
 
-import inspect
+from functools import lru_cache
 import json
 import math
 import os
 import random
 import shutil
 import subprocess
-import tempfile
-import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -29,29 +27,12 @@ from PIL import Image
 
 from . import expressive_glyphs, glyph_variants, layout_quirks, manuscript_marks, profile_resolver, stroke_engine, styles
 from .musescore_compat import (
-    CLEF_BOTTOM_DIATONIC,
-    DURATION_BEATS,
-    FLAT_STEPS_BY_CLEF,
-    LETTER_TO_DIATONIC,
-    NATURAL_SEMITONES,
-    SHARP_STEPS_BY_CLEF,
-    DynamicEvent,
-    HairpinSpan,
-    MeasureData,
-    MidMeasureChange,
     NoteEvent,
     ParsedScore,
-    PartData,
     RestEvent,
     ScoreEvent,
-    TempoEvent,
-    TieSlurSpan,
-    VoltaBracket,
-    base_clef_code,
-    clef_octave_shift,
     export_score_to_musicxml,
     parse_score,
-    resolve_polyphony_and_collisions,
 )
 
 
@@ -467,16 +448,28 @@ def _compute_beat_x_map(
 # ---------------------------------------------------------------------------
 
 
-def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 20) -> np.ndarray:
+@lru_cache(maxsize=64)
+def _cubic_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     t = np.linspace(0.0, 1.0, n)[:, None]
     mt = 1.0 - t
-    return (mt ** 3) * p0 + 3.0 * (mt ** 2) * t * p1 + 3.0 * mt * (t ** 2) * p2 + (t ** 3) * p3
+    return mt ** 3, 3.0 * (mt ** 2) * t, 3.0 * mt * (t ** 2), t ** 3
+
+
+@lru_cache(maxsize=64)
+def _quad_basis(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    mt = 1.0 - t
+    return mt ** 2, 2.0 * mt * t, t ** 2
+
+
+def _eval_cubic(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, n: int = 20) -> np.ndarray:
+    b0, b1, b2, b3 = _cubic_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2 + b3 * p3
 
 
 def _eval_quad(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int = 14) -> np.ndarray:
-    t = np.linspace(0.0, 1.0, n)[:, None]
-    mt = 1.0 - t
-    return (mt ** 2) * p0 + 2.0 * mt * t * p1 + (t ** 2) * p2
+    b0, b1, b2 = _quad_basis(n)
+    return b0 * p0 + b1 * p1 + b2 * p2
 
 
 def _draw_ledger_lines(
@@ -813,21 +806,41 @@ def _modulate_event_style(
     rel_m: int,
     n_meas_in_sys: int,
     u_in_bar: float,
+    *,
+    db: Optional[float] = None,
+    pa: Optional[float] = None,
+    base_stroke_scale: Optional[float] = None,
+    base_fill_density: Optional[float] = None,
+    base_opacity: Optional[float] = None,
+    scratch: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Apply subtle metric downbeat weight boost & phrase-arc pressure modulation."""
-    db = float(np.clip(styles.resolve_ductus_param(base_style, "downbeat_weight_boost", 0.0), 0.0, 0.42))
-    pa = float(np.clip(styles.resolve_ductus_param(base_style, "phrase_arc_mod", 0.0), 0.0, 0.40))
+    if db is None:
+        raw_db = float(styles.resolve_ductus_param(base_style, "downbeat_weight_boost", 0.0))
+        db = 0.0 if raw_db < 0.0 else (0.42 if raw_db > 0.42 else raw_db)
+    if pa is None:
+        raw_pa = float(styles.resolve_ductus_param(base_style, "phrase_arc_mod", 0.0))
+        pa = 0.0 if raw_pa < 0.0 else (0.40 if raw_pa > 0.40 else raw_pa)
     if db <= 1e-4 and pa <= 1e-4:
         return base_style
-    ev_style = dict(base_style)
+    ev_style = scratch if scratch is not None else dict(base_style)
     is_downbeat = (beat_offset % 4.0) < 0.08
     sys_u = (rel_m + u_in_bar) / max(1.0, float(n_meas_in_sys))
-    arc = math.sin(math.pi * float(np.clip(sys_u, 0.0, 1.0))) - 0.45
+    if sys_u < 0.0:
+        sys_u = 0.0
+    elif sys_u > 1.0:
+        sys_u = 1.0
+    arc = math.sin(math.pi * sys_u) - 0.45
     pressure = 1.0 + (db if is_downbeat else -0.15 * db * u_in_bar) + pa * arc
-    ev_style["stroke_scale"] = float(np.clip(float(base_style.get("stroke_scale", 1.0)) * pressure, 0.45, 2.20))
-    ev_style["notehead_fill_density"] = float(np.clip(float(base_style.get("notehead_fill_density", 1.0)) * pressure, 0.25, 1.50))
-    base_op = float(base_style.get("stroke_opacity", base_style.get("opacity", 0.92)))
-    ev_style["stroke_opacity"] = float(np.clip(base_op * (0.94 + 0.08 * pressure), 0.25, 1.0))
+    bs = float(base_style.get("stroke_scale", 1.0)) if base_stroke_scale is None else base_stroke_scale
+    bf = float(base_style.get("notehead_fill_density", 1.0)) if base_fill_density is None else base_fill_density
+    bo = float(base_style.get("stroke_opacity", base_style.get("opacity", 0.92))) if base_opacity is None else base_opacity
+    ss = bs * pressure
+    ev_style["stroke_scale"] = 0.45 if ss < 0.45 else (2.20 if ss > 2.20 else ss)
+    fd = bf * pressure
+    ev_style["notehead_fill_density"] = 0.25 if fd < 0.25 else (1.50 if fd > 1.50 else fd)
+    op = bo * (0.94 + 0.08 * pressure)
+    ev_style["stroke_opacity"] = 0.25 if op < 0.25 else (1.0 if op > 1.0 else op)
     return ev_style
 
 
@@ -935,7 +948,7 @@ def _export_training_systems(
 
         sys_stem = f"{stem}_sys{sys_lay.system_index:02d}"
         crop_png = export_dir / f"{sys_stem}.png"
-        final_img.crop((left_x, y0, right_x, y1)).save(crop_png)
+        final_img.crop((left_x, y0, right_x, y1)).save(crop_png, compress_level=1)
 
         m1 = sys_lay.measure_start + 1
         m2 = sys_lay.measure_end
@@ -1148,55 +1161,92 @@ def plan_measure_beam_groups(
 
 def render_score_handwritten(
     score_path: Union[str, Path],
-    style_name: str,
+    style_name: Union[str, Dict[str, Any]],
     out_png: Union[str, Path],
     seed: int = 42,
     page_w: int = 1650,
     page_h: int = 2200,
     export_train_dir: Optional[Union[str, Path]] = None,
+    clean_paper: bool = False,
 ) -> Dict[str, Any]:
     """Render a MusicXML / MuseScore file in the given handwritten style.
 
     Saves `out_png` and a companion Bezier staff-curve GT JSON at `Path(out_png).with_suffix('.json')`.
     If `export_train_dir` is provided, also exports cropped per-system PNGs and per-system
     MusicXML targets (plus optional bekern output when an external converter is available).
+    When `clean_paper=True`, renders pure handwritten ink directly onto flat white `[1.0, 1.0, 1.0]`
+    paper, skipping manuscript paper synthesis, pre-ink wear layers, and wet-ink/wear accidents.
     """
     score = parse_score(score_path)
     raw_style = styles.get_style(style_name) if hasattr(styles, "get_style") else styles.SCRIBE_STYLES[style_name]
+    display_style_name = style_name if isinstance(style_name, str) else str(raw_style.get("name", "custom_style"))
     # Merge deterministic v0.3.0 Layers 1–4 profile (explicit keys in raw_style always win)
-    style = dict(profile_resolver.resolve_page_and_expressive_profile(raw_style))
+    style = dict(profile_resolver.resolve_page_and_expressive_profile(raw_style, clean_paper=clean_paper))
     style.update(raw_style)
+    if clean_paper:
+        style["paper_binding_mode"] = "none"
+        style["paper_background_grid"] = "none"
+        style["paper_border_mode"] = "none"
+        style["verso_bleed_strength"] = 0.0
+        style["fold_crease_prob"] = 0.0
+        style["foxing_cluster_prob"] = 0.0
+        style["ink_blot_prob"] = 0.0
+        style["palm_smear_prob"] = 0.0
+        style["dog_ear_prob"] = 0.0
     rng = random.Random(seed)
     np_rng = np.random.default_rng(seed)
 
     ink_rgb = style.get("ink_rgb", (0.12, 0.10, 0.08))
     staff_ink_rgb = style.get("staff_ink_rgb", ink_rgb)
-    paper_rgb = style.get("paper_rgb", (0.95, 0.92, 0.86))
+    paper_rgb = (1.0, 1.0, 1.0) if clean_paper else style.get("paper_rgb", (0.95, 0.92, 0.86))
     stroke_scale = float(style.get("stroke_scale", 1.0))
 
-    # 1. Manuscript paper background
-    paper_arr = layout_quirks.make_manuscript_paper(page_w, page_h, style, np_rng)
-    if isinstance(paper_arr, Image.Image):
-        paper_f32 = np.asarray(paper_arr.convert("RGB"), dtype=np.float32) / 255.0
+    # 1 & 2. Manuscript paper background + StrokeCanvas initialization
+    if clean_paper:
+        canvas = stroke_engine.StrokeCanvas(
+            width=page_w,
+            height=page_h,
+            bg_rgb=(1.0, 1.0, 1.0),
+            rng=np_rng,
+        )
     else:
-        paper_f32 = np.asarray(paper_arr, dtype=np.float32)
-        if float(np.max(paper_f32)) > 1.0 + 1e-3:
-            paper_f32 = paper_f32 / 255.0
-        paper_f32 = np.clip(paper_f32, 0.0, 1.0)
-
-    # 2. Initialize StrokeCanvas & load textured paper
-    canvas = stroke_engine.StrokeCanvas(
-        width=page_w,
-        height=page_h,
-        bg_rgb=paper_rgb,
-        rng=np_rng,
-    )
-    if hasattr(canvas, "buf") and canvas.buf.shape == paper_f32.shape:
-        canvas.buf[:] = paper_f32
+        paper_arr = layout_quirks.make_manuscript_paper(page_w, page_h, style, np_rng)
+        if isinstance(paper_arr, Image.Image):
+            paper_f32 = np.asarray(paper_arr.convert("RGB"), dtype=np.float32) / 255.0
+        else:
+            paper_f32 = np.asarray(paper_arr, dtype=np.float32)
+            if float(np.max(paper_f32)) > 1.0 + 1e-3:
+                paper_f32 = paper_f32 / 255.0
+                np.clip(paper_f32, 0.0, 1.0, out=paper_f32)
+        canvas = stroke_engine.StrokeCanvas(
+            width=page_w,
+            height=page_h,
+            bg_rgb=paper_rgb,
+            rng=np_rng,
+            init_buf=paper_f32 if paper_f32.shape == (page_h, page_w, 3) else None,
+        )
+        if canvas.buf is not paper_f32 and hasattr(canvas, "buf") and canvas.buf.shape == paper_f32.shape:
+            canvas.buf[:] = paper_f32
 
     # 2b. Pre-ink living-manuscript layers (mirrored verso bleed, fold crease, foxing clusters)
     manuscript_marks_log: List[Dict[str, Any]] = []
-    manuscript_marks.apply_pre_ink_manuscript_layers(canvas, style, np_rng, manuscript_marks_log)
+    if not clean_paper:
+        manuscript_marks.apply_pre_ink_manuscript_layers(canvas, style, np_rng, manuscript_marks_log)
+
+    # Hoist page-invariant ductus & beam parameters out of measure/note loops.
+    page_beam_grouping_mode = styles.resolve_beam_grouping_mode(style)
+    page_pitch_slop = float(np.clip(styles.resolve_ductus_param(style, "pitch_y_slop_sp", 0.0), 0.0, 0.145))
+    page_chord_stag = float(np.clip(styles.resolve_ductus_param(style, "chord_x_stagger_sp", 0.0), 0.0, 0.28))
+    page_acc_off_sp = float(np.clip(styles.resolve_ductus_param(style, "accidental_x_offset_sp", 1.25), 0.92, 1.85))
+    page_acc_jit_sp = float(np.clip(styles.resolve_ductus_param(style, "accidental_x_jitter_sp", 0.0), 0.0, 0.34))
+    page_lig_prob = float(np.clip(styles.resolve_ductus_param(style, "ligature_prob", 0.0), 0.0, 0.85))
+    page_center_p = float(np.clip(styles.resolve_ductus_param(style, "stem_center_mix_prob", 0.0), 0.0, 0.45))
+    page_wrong_p = float(np.clip(styles.resolve_ductus_param(style, "stem_wrong_side_prob", 0.0), 0.0, 0.16))
+    page_db_boost = float(np.clip(styles.resolve_ductus_param(style, "downbeat_weight_boost", 0.0), 0.0, 0.42))
+    page_phrase_arc = float(np.clip(styles.resolve_ductus_param(style, "phrase_arc_mod", 0.0), 0.0, 0.40))
+    page_base_fill = float(style.get("notehead_fill_density", 1.0))
+    page_base_op = float(style.get("stroke_opacity", style.get("opacity", 0.92)))
+    ev_style_scratch = dict(style)
 
     # 3. Compute page systems & curved staff lines
     systems = layout_score_pages(score, page_w=page_w, page_h=page_h, style=style, rng=rng)
@@ -1467,7 +1517,7 @@ def render_score_handwritten(
                             )
 
                     # Pre-group beamed notes per effective beam_group ID (respecting beam_grouping_mode & split prob)
-                    beam_grouping_mode = styles.resolve_beam_grouping_mode(style)
+                    beam_grouping_mode = page_beam_grouping_mode
                     eff_beam_groups = plan_measure_beam_groups(meas.events, style, np_rng)
                     beam_group_dir: Dict[int, int] = {}
                     for ev_i, ev in enumerate(meas.events):
@@ -1494,13 +1544,13 @@ def render_score_handwritten(
                     tuplet_groups: Dict[int, List[Tuple[float, float, float, int, int]]] = {}
                     prev_note_by_voice: Dict[int, Dict[str, Any]] = {}
                     n_meas_in_sys = max(1, sys_lay.measure_end - sys_lay.measure_start)
-                    pitch_slop = float(np.clip(styles.resolve_ductus_param(style, "pitch_y_slop_sp", 0.0), 0.0, 0.145))
-                    chord_stag = float(np.clip(styles.resolve_ductus_param(style, "chord_x_stagger_sp", 0.0), 0.0, 0.28))
-                    acc_off_sp = float(np.clip(styles.resolve_ductus_param(style, "accidental_x_offset_sp", 1.25), 0.92, 1.85))
-                    acc_jit_sp = float(np.clip(styles.resolve_ductus_param(style, "accidental_x_jitter_sp", 0.0), 0.0, 0.34))
-                    lig_prob = float(np.clip(styles.resolve_ductus_param(style, "ligature_prob", 0.0), 0.0, 0.85))
-                    center_p = float(np.clip(styles.resolve_ductus_param(style, "stem_center_mix_prob", 0.0), 0.0, 0.45))
-                    wrong_p = float(np.clip(styles.resolve_ductus_param(style, "stem_wrong_side_prob", 0.0), 0.0, 0.16))
+                    pitch_slop = page_pitch_slop
+                    chord_stag = page_chord_stag
+                    acc_off_sp = page_acc_off_sp
+                    acc_jit_sp = page_acc_jit_sp
+                    lig_prob = page_lig_prob
+                    center_p = page_center_p
+                    wrong_p = page_wrong_p
 
                     for ev_idx, (ev, ex) in enumerate(zip(meas.events, ev_xs)):
                         yc = y_mid(ex)
@@ -1560,7 +1610,19 @@ def render_score_handwritten(
                             stem_dir = -1 if avg_step >= 4.0 else 1
 
                         u_in_bar = float(np.clip((ex - bx0) / max(1.0, bx1 - bx0), 0.0, 1.0))
-                        ev_style = _modulate_event_style(style, ev.beat_offset, rel_m, n_meas_in_sys, u_in_bar)
+                        ev_style = _modulate_event_style(
+                            style,
+                            ev.beat_offset,
+                            rel_m,
+                            n_meas_in_sys,
+                            u_in_bar,
+                            db=page_db_boost,
+                            pa=page_phrase_arc,
+                            base_stroke_scale=stroke_scale,
+                            base_fill_density=page_base_fill,
+                            base_opacity=page_base_op,
+                            scratch=ev_style_scratch,
+                        )
 
                         ys_note: List[float] = []
                         xs_note: List[float] = []
@@ -2082,6 +2144,7 @@ def render_score_handwritten(
         style=style,
         rng=np_rng,
         marks_out=manuscript_marks_log,
+        clean_paper=clean_paper,
     )
 
     # Optional legacy margin annotations (boxed rehearsal marks & conductor cues)
@@ -2096,15 +2159,16 @@ def render_score_handwritten(
     out_path = Path(out_png)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     final_img = canvas.to_pil()
-    final_img.save(out_path)
+    final_img.save(out_path, compress_level=1)
 
     gt_payload: Dict[str, Any] = {
         "score_title": score.title,
         "source_path": str(score_path),
-        "style": style_name,
+        "style": display_style_name,
         "seed": seed,
         "page_w": page_w,
         "page_h": page_h,
+        "clean_paper": bool(clean_paper),
         "systems": gt_systems,
     }
     if manuscript_marks_log:

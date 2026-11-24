@@ -73,16 +73,26 @@ class StrokeCanvas:
         height: int,
         bg_rgb: RGBLike,
         rng: Optional[np.random.Generator] = None,
+        init_buf: Optional[np.ndarray] = None,
     ) -> None:
         self.width = int(width)
         self.height = int(height)
         self.bg_rgb = _normalize_rgb(bg_rgb)
         self.rng = rng if rng is not None else np.random.default_rng()
-        self.buf = np.empty((self.height, self.width, 3), dtype=np.float32)
-        self.buf[:, :, 0] = self.bg_rgb[0]
-        self.buf[:, :, 1] = self.bg_rgb[1]
-        self.buf[:, :, 2] = self.bg_rgb[2]
+        if (
+            init_buf is not None
+            and isinstance(init_buf, np.ndarray)
+            and init_buf.shape == (self.height, self.width, 3)
+            and init_buf.dtype == np.float32
+        ):
+            self.buf = init_buf
+        else:
+            self.buf = np.empty((self.height, self.width, 3), dtype=np.float32)
+            self.buf[:, :, 0] = self.bg_rgb[0]
+            self.buf[:, :, 1] = self.bg_rgb[1]
+            self.buf[:, :, 2] = self.bg_rgb[2]
         self._tooth_tile: Optional[np.ndarray] = None
+        self._tooth_full: Optional[np.ndarray] = None
         self._stroke_count: int = 0
 
     def advance_ink_dip(self, style: dict) -> tuple[float, float]:
@@ -107,13 +117,17 @@ class StrokeCanvas:
 
     def get_tooth_patch(self, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
         """Return paper-tooth texture values in [0, 1] for [y0:y1, x0:x1]."""
-        if self._tooth_tile is None:
-            self._tooth_tile = _generate_paper_tooth(self.rng, tile_size=256)
-        tile = self._tooth_tile
-        n = tile.shape[0]
-        ys = np.arange(y0, y1, dtype=np.int32) % n
-        xs = np.arange(x0, x1, dtype=np.int32) % n
-        return tile[np.ix_(ys, xs)]
+        if self._tooth_full is None:
+            if self._tooth_tile is None:
+                self._tooth_tile = _generate_paper_tooth(self.rng, tile_size=256)
+            tile = self._tooth_tile
+            th, tw = tile.shape
+            reps_y = (self.height + th - 1) // th
+            reps_x = (self.width + tw - 1) // tw
+            self._tooth_full = np.ascontiguousarray(
+                np.tile(tile, (reps_y, reps_x))[: self.height, : self.width]
+            )
+        return self._tooth_full[y0:y1, x0:x1]
 
     def composite_patch(
         self,
@@ -127,10 +141,13 @@ class StrokeCanvas:
         """Alpha-composite an ink patch onto the canvas buffer."""
         if x1 <= x0 or y1 <= y0:
             return
-        a = np.clip(alpha, 0.0, 1.0).astype(np.float32)[..., None]
+        a = alpha if alpha.dtype == np.float32 else alpha.astype(np.float32)
+        a3 = np.clip(a, np.float32(0.0), np.float32(1.0))[..., None]
         dst = self.buf[y0:y1, x0:x1]
-        # Standard over-blend; ink slightly darkens underlying strokes naturally.
-        self.buf[y0:y1, x0:x1] = dst * (1.0 - a) + ink_rgb[None, None, :] * a
+        # In-place over-blend: dst += (ink_rgb - dst) * a3 (1 temp buffer vs 5-6)
+        diff = ink_rgb[None, None, :] - dst
+        diff *= a3
+        dst += diff
 
     def to_uint8(self) -> np.ndarray:
         """Convert buffer to uint8 RGB ndarray (H, W, 3)."""
@@ -147,15 +164,44 @@ def _smooth_1d_noise(rng: np.random.Generator, n_samples: int, n_knots: int) -> 
         return np.zeros(n_samples, dtype=np.float64)
     n_knots = max(2, min(n_knots, n_samples))
     knots = rng.standard_normal(n_knots)
-    t_knots = np.linspace(0.0, 1.0, n_knots)
-    t_eval = np.linspace(0.0, 1.0, n_samples)
-    # Cosine-eased piecewise interpolation for smooth derivatives.
-    idx = np.searchsorted(t_knots, t_eval, side="right") - 1
-    idx = np.clip(idx, 0, n_knots - 2)
-    denom = t_knots[idx + 1] - t_knots[idx]
-    local_t = np.where(denom > 0, (t_eval - t_knots[idx]) / denom, 0.0)
+    # Direct uniform-grid indexing (avoids np.searchsorted).
+    pos = np.linspace(0.0, float(n_knots - 1), n_samples)
+    idx = np.minimum(pos.astype(np.intp), n_knots - 2)
+    local_t = pos - idx
     mu = 0.5 * (1.0 - np.cos(math.pi * local_t))
     return knots[idx] * (1.0 - mu) + knots[idx + 1] * mu
+
+
+def _smooth_1d_noise_pair(
+    rng: np.random.Generator, n_samples: int, n_knots: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate two independent smooth 1D noise arrays sharing uniform-grid idx/mu."""
+    if n_samples <= 1:
+        z = np.zeros(n_samples, dtype=np.float64)
+        return z, z.copy()
+    n_knots = max(2, min(n_knots, n_samples))
+    knots_a = rng.standard_normal(n_knots)
+    knots_b = rng.standard_normal(n_knots)
+    pos = np.linspace(0.0, float(n_knots - 1), n_samples)
+    idx = np.minimum(pos.astype(np.intp), n_knots - 2)
+    local_t = pos - idx
+    mu = 0.5 * (1.0 - np.cos(math.pi * local_t))
+    omt = 1.0 - mu
+    return knots_a[idx] * omt + knots_a[idx + 1] * mu, knots_b[idx] * omt + knots_b[idx + 1] * mu
+
+
+def _polyline_grad(pts: np.ndarray) -> np.ndarray:
+    """Fast central-difference gradient along axis 0 for (M, 2) polylines."""
+    n = len(pts)
+    g = np.empty_like(pts)
+    if n <= 2:
+        d = pts[-1] - pts[0]
+        g[:] = d
+    else:
+        g[0] = pts[1] - pts[0]
+        g[-1] = pts[-1] - pts[-2]
+        g[1:-1] = 0.5 * (pts[2:] - pts[:-2])
+    return g
 
 
 def _resample_polyline(pts: np.ndarray, step_px: float) -> tuple[np.ndarray, np.ndarray, float]:
@@ -210,6 +256,60 @@ def _soft_blur_2d(arr: np.ndarray, radius: int) -> np.ndarray:
     if r <= 0 or arr.size == 0:
         return arr.copy()
     out = arr.astype(np.float32, copy=True)
+    if r == 1:
+        inv3 = np.float32(1.0 / 3.0)
+        for _ in range(2):
+            p = np.pad(out, ((0, 0), (1, 1)), mode="edge")
+            acc = p[:, :-2].copy()
+            acc += p[:, 1:-1]
+            acc += p[:, 2:]
+            acc *= inv3
+            p = np.pad(acc, ((1, 1), (0, 0)), mode="edge")
+            out = p[:-2, :].copy()
+            out += p[1:-1, :]
+            out += p[2:, :]
+            out *= inv3
+        return out
+    if r == 2:
+        inv5 = np.float32(1.0 / 5.0)
+        for _ in range(2):
+            p = np.pad(out, ((0, 0), (2, 2)), mode="edge")
+            acc = p[:, :-4].copy()
+            acc += p[:, 1:-3]
+            acc += p[:, 2:-2]
+            acc += p[:, 3:-1]
+            acc += p[:, 4:]
+            acc *= inv5
+            p = np.pad(acc, ((2, 2), (0, 0)), mode="edge")
+            out = p[:-4, :].copy()
+            out += p[1:-3, :]
+            out += p[2:-2, :]
+            out += p[3:-1, :]
+            out += p[4:, :]
+            out *= inv5
+        return out
+    if r == 3:
+        inv7 = np.float32(1.0 / 7.0)
+        for _ in range(2):
+            p = np.pad(out, ((0, 0), (3, 3)), mode="edge")
+            acc = p[:, :-6].copy()
+            acc += p[:, 1:-5]
+            acc += p[:, 2:-4]
+            acc += p[:, 3:-3]
+            acc += p[:, 4:-2]
+            acc += p[:, 5:-1]
+            acc += p[:, 6:]
+            acc *= inv7
+            p = np.pad(acc, ((3, 3), (0, 0)), mode="edge")
+            out = p[:-6, :].copy()
+            out += p[1:-5, :]
+            out += p[2:-4, :]
+            out += p[3:-3, :]
+            out += p[4:-2, :]
+            out += p[5:-1, :]
+            out += p[6:, :]
+            out *= inv7
+        return out
     k = 2 * r + 1
     inv_k = np.float32(1.0 / k)
     for _ in range(2):
@@ -234,6 +334,7 @@ def _apply_ink_feather(
     x1: int,
     y1: int,
     ink_feather: float,
+    tooth: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Add an organic porous-paper wet-ink feathering/bleed halo around a stroke patch."""
     f = float(np.clip(ink_feather, 0.0, 1.0))
@@ -241,10 +342,11 @@ def _apply_ink_feather(
         return patch
     radius = max(1, int(round(1.0 + 2.5 * f)))
     halo = _soft_blur_2d(patch, radius)
-    tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
+    if tooth is None:
+        tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
     # Porous fibers wick ink unevenly outward.
     fiber_mod = np.float32(0.50) + np.float32(0.85) * tooth
-    feathered = np.clip(halo * fiber_mod * np.float32(0.55 * f), 0.0, 0.85)
+    feathered = np.clip(halo * fiber_mod * np.float32(0.55 * f), np.float32(0.0), np.float32(0.85))
     return np.maximum(patch, feathered)
 
 
@@ -263,8 +365,20 @@ def _stamp_discs_to_canvas(
     """Rasterize variable-radius anti-aliased discs into a local bbox and blend."""
     if len(xs) == 0:
         return
+    valid = (alphas > 1e-4) & (radii > 1e-3)
+    if not np.any(valid):
+        return
+    if not np.all(valid):
+        xs = xs[valid]
+        ys = ys[valid]
+        radii = radii[valid]
+        alphas = alphas[valid]
+        if pool_strengths is not None:
+            pool_strengths = pool_strengths[valid]
+
+    n_discs = len(xs)
     max_r = float(np.max(radii))
-    feather_f = float(np.clip(ink_feather, 0.0, 1.0))
+    feather_f = 0.0 if ink_feather <= 0.0 else (1.0 if ink_feather >= 1.0 else float(ink_feather))
     feather_pad = int(math.ceil(feather_f * 4.0)) + 1 if feather_f > 1e-4 else 0
     pad = int(math.ceil(max_r + 1.5)) + feather_pad
     x0 = max(0, int(math.floor(float(np.min(xs)))) - pad)
@@ -274,57 +388,142 @@ def _stamp_discs_to_canvas(
     if x1 <= x0 or y1 <= y0:
         return
 
-    patch = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
-    use_pool = pool_strengths is not None and float(np.max(pool_strengths)) > 1e-4
-    pool_patch = np.zeros((y1 - y0, x1 - x0), dtype=np.float32) if use_pool else None
     pw = x1 - x0
     ph = y1 - y0
+    rad_i = int(math.ceil(max_r + 1.0))
+    win_w = 2 * rad_i + 1
 
-    if use_pool and pool_strengths is not None:
-        p_iter = pool_strengths
+    # Chunk sparse long bboxes (e.g. slurs, beams, braces) so we don't allocate/blur giant empty patches.
+    if n_discs > 32 and pw * ph > 24000 and pw * ph > n_discs * win_w * win_w * 3:
+        chunk_sz = 32
+        for start in range(0, n_discs, chunk_sz):
+            end = start + chunk_sz
+            ps_chunk = pool_strengths[start:end] if pool_strengths is not None else None
+            _stamp_discs_to_canvas(
+                canvas,
+                xs[start:end],
+                ys[start:end],
+                radii[start:end],
+                alphas[start:end],
+                ink_rgb,
+                stroke_opacity,
+                grain_strength,
+                ink_feather=feather_f,
+                pool_strengths=ps_chunk,
+            )
+        return
+
+    lx = (xs - np.float64(x0)).astype(np.float32)
+    ly = (ys - np.float64(y0)).astype(np.float32)
+    r_f32 = radii.astype(np.float32, copy=False)
+    a_f32 = alphas.astype(np.float32, copy=False)
+
+    cx_i = np.floor(lx).astype(np.int32)
+    cy_i = np.floor(ly).astype(np.int32)
+    fx = lx - cx_i
+    fy = ly - cy_i
+
+    # Vectorized (B, W, W) disc coverage computation.
+    offsets = np.arange(-rad_i, rad_i + 1, dtype=np.float32)
+    gx = offsets[None, None, :] - fx[:, None, None]  # (B, 1, W)
+    gy = offsets[None, :, None] - fy[:, None, None]  # (B, W, 1)
+    dist = np.sqrt(gx * gx + gy * gy)  # (B, W, W)
+    cov = np.clip((r_f32[:, None, None] + np.float32(0.5)) - dist, np.float32(0.0), np.float32(1.0))
+    cov *= a_f32[:, None, None]
+
+    use_pool = pool_strengths is not None and float(np.max(pool_strengths)) > 1e-4
+
+    # Check if all (W x W) windows fit strictly inside [0, ph) x [0, pw).
+    bx0 = cx_i - rad_i
+    by0 = cy_i - rad_i
+    touches_edge = (
+        int(bx0.min()) < 0
+        or int(by0.min()) < 0
+        or int(bx0.max()) + win_w > pw
+        or int(by0.max()) + win_w > ph
+    )
+
+    if touches_edge:
+        bpad = rad_i + 1
+        patch_buf = np.zeros((ph + 2 * bpad, pw + 2 * bpad), dtype=np.float32)
+        pool_buf = np.zeros((ph + 2 * bpad, pw + 2 * bpad), dtype=np.float32) if use_pool else None
+        bx0_s = (bx0 + bpad).tolist()
+        by0_s = (by0 + bpad).tolist()
+        max_y_lim = ph + 2 * bpad - win_w
+        max_x_lim = pw + 2 * bpad - win_w
+        if pool_buf is not None and pool_strengths is not None:
+            ps_f32 = pool_strengths.astype(np.float32, copy=False)
+            p_cov = cov * ps_f32[:, None, None]
+            for i in range(n_discs):
+                xi, yi = bx0_s[i], by0_s[i]
+                if 0 <= xi <= max_x_lim and 0 <= yi <= max_y_lim:
+                    sub = patch_buf[yi : yi + win_w, xi : xi + win_w]
+                    np.maximum(sub, cov[i], out=sub)
+                    if ps_f32[i] > 1e-4:
+                        psub = pool_buf[yi : yi + win_w, xi : xi + win_w]
+                        np.maximum(psub, p_cov[i], out=psub)
+        else:
+            for i in range(n_discs):
+                xi, yi = bx0_s[i], by0_s[i]
+                if 0 <= xi <= max_x_lim and 0 <= yi <= max_y_lim:
+                    sub = patch_buf[yi : yi + win_w, xi : xi + win_w]
+                    np.maximum(sub, cov[i], out=sub)
+        patch = patch_buf[bpad : bpad + ph, bpad : bpad + pw]
+        pool_patch = pool_buf[bpad : bpad + ph, bpad : bpad + pw] if pool_buf is not None else None
     else:
-        p_iter = np.zeros(len(xs), dtype=np.float32)
+        patch = np.zeros((ph, pw), dtype=np.float32)
+        pool_patch = np.zeros((ph, pw), dtype=np.float32) if use_pool else None
+        bx0_l = bx0.tolist()
+        by0_l = by0.tolist()
+        if pool_patch is not None and pool_strengths is not None:
+            ps_f32 = pool_strengths.astype(np.float32, copy=False)
+            p_cov = cov * ps_f32[:, None, None]
+            for i in range(n_discs):
+                xi, yi = bx0_l[i], by0_l[i]
+                sub = patch[yi : yi + win_w, xi : xi + win_w]
+                np.maximum(sub, cov[i], out=sub)
+                if ps_f32[i] > 1e-4:
+                    psub = pool_patch[yi : yi + win_w, xi : xi + win_w]
+                    np.maximum(psub, p_cov[i], out=psub)
+        else:
+            for i in range(n_discs):
+                xi, yi = bx0_l[i], by0_l[i]
+                sub = patch[yi : yi + win_w, xi : xi + win_w]
+                np.maximum(sub, cov[i], out=sub)
 
-    for px, py, r, a, ps in zip(xs, ys, radii, alphas, p_iter):
-        if a <= 1e-4 or r <= 1e-3:
-            continue
-        lx = px - x0
-        ly = py - y0
-        rad_i = int(math.ceil(r + 1.0))
-        ix0 = max(0, int(math.floor(lx)) - rad_i)
-        iy0 = max(0, int(math.floor(ly)) - rad_i)
-        ix1 = min(pw, int(math.ceil(lx)) + rad_i + 1)
-        iy1 = min(ph, int(math.ceil(ly)) + rad_i + 1)
-        if ix1 <= ix0 or iy1 <= iy0:
-            continue
-
-        gx = np.arange(ix0, ix1, dtype=np.float32) - np.float32(lx)
-        gy = np.arange(iy0, iy1, dtype=np.float32) - np.float32(ly)
-        dist = np.hypot(gx[None, :], gy[:, None])
-        cov = np.clip(np.float32(r + 0.5) - dist, 0.0, 1.0) * np.float32(a)
-        sub = patch[iy0:iy1, ix0:ix1]
-        np.maximum(sub, cov, out=sub)
-        if pool_patch is not None and ps > 1e-4:
-            p_sub = pool_patch[iy0:iy1, ix0:ix1]
-            np.maximum(p_sub, cov * np.float32(ps), out=p_sub)
+    tooth: Optional[np.ndarray] = None
+    if feather_f > 1e-4 or grain_strength > 0.0:
+        tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
 
     if feather_f > 1e-4:
-        patch = _apply_ink_feather(patch, canvas, x0, y0, x1, y1, feather_f)
+        patch = _apply_ink_feather(patch, canvas, x0, y0, x1, y1, feather_f, tooth=tooth)
 
-    if grain_strength > 0.0:
-        tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
+    if grain_strength > 0.0 and tooth is not None:
         # Paper tooth attenuates ink more strongly in lighter/drier areas.
-        grain_mod = np.clip(1.0 - grain_strength * (1.0 - tooth) * 1.25, 0.08, 1.0)
+        grain_mod = np.clip(
+            np.float32(1.0) - np.float32(grain_strength * 1.25) * (np.float32(1.0) - tooth),
+            np.float32(0.08),
+            np.float32(1.0),
+        )
         patch *= grain_mod
 
     if pool_patch is not None:
         # Speed-dependent pooling darkens ink slightly and boosts local opacity at sharp turns.
-        eff_alpha = np.clip(patch * np.float32(stroke_opacity) + pool_patch * np.float32(0.18), 0.0, 1.0)
-        darken = np.clip(1.0 - np.float32(0.32) * pool_patch, 0.55, 1.0)[..., None]
-        local_ink = np.clip(ink_rgb[None, None, :] * darken, 0.0, 1.0)
-        a3 = eff_alpha[..., None]
+        eff_alpha = np.clip(
+            patch * np.float32(stroke_opacity) + pool_patch * np.float32(0.18),
+            np.float32(0.0),
+            np.float32(1.0),
+        )
+        darken = np.clip(
+            np.float32(1.0) - np.float32(0.32) * pool_patch,
+            np.float32(0.55),
+            np.float32(1.0),
+        )[..., None]
+        local_ink = np.clip(ink_rgb[None, None, :] * darken, np.float32(0.0), np.float32(1.0))
         dst = canvas.buf[y0:y1, x0:x1]
-        canvas.buf[y0:y1, x0:x1] = dst * (1.0 - a3) + local_ink * a3
+        diff = local_ink - dst
+        diff *= eff_alpha[..., None]
+        dst += diff
     else:
         patch *= np.float32(stroke_opacity)
         canvas.composite_patch(x0, y0, x1, y1, patch, ink_rgb)
@@ -375,7 +574,7 @@ def draw_calligraphic_polyline(
         return
 
     # Tangents and normals along resampled path.
-    grad = np.gradient(res_pts, axis=0)
+    grad = _polyline_grad(res_pts)
     gnorm = np.hypot(grad[:, 0], grad[:, 1])
     gnorm = np.where(gnorm > 1e-7, gnorm, 1.0)
     tx = grad[:, 0] / gnorm
@@ -402,13 +601,14 @@ def draw_calligraphic_polyline(
 
     if tremor_px > 0.0:
         n_knots = max(3, int(total_len / 6.0) + 2)
-        trem_n = _smooth_1d_noise(rng, len(res_pts), n_knots) * (tremor_px * len_scale)
-        trem_t = _smooth_1d_noise(rng, len(res_pts), n_knots) * (tremor_px * 0.35 * len_scale)
+        tn_raw, tt_raw = _smooth_1d_noise_pair(rng, len(res_pts), n_knots)
+        trem_n = tn_raw * (tremor_px * len_scale)
+        trem_t = tt_raw * (tremor_px * 0.35 * len_scale)
         res_pts[:, 0] += nx * trem_n + tx * trem_t
         res_pts[:, 1] += ny * trem_n + ty * trem_t
 
     # Recompute tangents after perturbation for accurate nib angle.
-    grad2 = np.gradient(res_pts, axis=0)
+    grad2 = _polyline_grad(res_pts)
     theta = np.arctan2(grad2[:, 1], grad2[:, 0])
 
     # 2. Broad-nib / italic angle width physics.
@@ -497,29 +697,18 @@ def draw_calligraphic_polyline(
         sep = np.maximum(0.45, radii * (0.45 + 0.25 * env)) * pressure_gate
         r_hi = np.maximum(0.25, radii * (1.0 - 0.44 * pressure_gate))
         r_lo = np.maximum(0.25, radii * (1.0 - 0.52 * pressure_gate))
+        ps_both = np.concatenate((pool_strengths, pool_strengths)) if pool_strengths is not None else None
         _stamp_discs_to_canvas(
             canvas,
-            res_pts[:, 0] + nx2 * sep,
-            res_pts[:, 1] + ny2 * sep,
-            r_hi,
-            alphas * (1.0 - 0.08 * pressure_gate),
+            np.concatenate((res_pts[:, 0] + nx2 * sep, res_pts[:, 0] - nx2 * sep)),
+            np.concatenate((res_pts[:, 1] + ny2 * sep, res_pts[:, 1] - ny2 * sep)),
+            np.concatenate((r_hi, r_lo)),
+            np.concatenate((alphas * (1.0 - 0.08 * pressure_gate), alphas * (1.0 - 0.22 * pressure_gate))),
             ink_rgb,
             stroke_opacity,
             grain_strength,
             ink_feather=ink_feather,
-            pool_strengths=pool_strengths,
-        )
-        _stamp_discs_to_canvas(
-            canvas,
-            res_pts[:, 0] - nx2 * sep,
-            res_pts[:, 1] - ny2 * sep,
-            r_lo,
-            alphas * (1.0 - 0.22 * pressure_gate),
-            ink_rgb,
-            stroke_opacity,
-            grain_strength,
-            ink_feather=ink_feather,
-            pool_strengths=pool_strengths,
+            pool_strengths=ps_both,
         )
         return
 
@@ -642,12 +831,15 @@ def draw_staff_line(
     patch = np.clip(radii.astype(np.float32)[None, :] + np.float32(0.5) - dist, 0.0, 1.0)
     patch *= col_alpha[None, :]
 
-    if ink_feather > 1e-4:
-        patch = _apply_ink_feather(patch, canvas, ix0, iy0, ix1, iy1, ink_feather)
-
     grain_strength = float(np.clip(style.get("grain_strength", 0.10) * (0.5 if pre_ruled else 1.0), 0.0, 1.0))
-    if grain_strength > 0.0:
+    tooth: Optional[np.ndarray] = None
+    if ink_feather > 1e-4 or grain_strength > 0.0:
         tooth = canvas.get_tooth_patch(ix0, iy0, ix1, iy1)
+
+    if ink_feather > 1e-4:
+        patch = _apply_ink_feather(patch, canvas, ix0, iy0, ix1, iy1, ink_feather, tooth=tooth)
+
+    if grain_strength > 0.0 and tooth is not None:
         patch *= np.clip(1.0 - grain_strength * (1.0 - tooth) * 1.15, 0.1, 1.0)
 
     ink_rgb, stroke_opacity = _perturb_ink_color(color_rgb, style, rng)
@@ -838,30 +1030,45 @@ def draw_filled_blob(
     uy = gx[None, :] * sin_t + gy[:, None] * cos_t
     nx = ux / np.float32(rx)
     ny = uy / np.float32(ry)
-    norm_r = np.hypot(nx, ny)
-    phi = np.arctan2(ny, nx)
+    norm_r = np.sqrt(nx * nx + ny * ny)
+    # Chebyshev trig identities avoid arctan2 + 3x array np.cos().
+    inv_r = np.float32(1.0) / np.maximum(norm_r, np.float32(1e-6))
+    c = nx * inv_r
+    s = ny * inv_r
+    cc = c * c
+    c2_phi = np.float32(2.0) * cc - np.float32(1.0)
+    s2_phi = np.float32(2.0) * s * c
+    c3_phi = (np.float32(4.0) * cc - np.float32(3.0)) * c
+    s3_phi = (np.float32(3.0) - np.float32(4.0) * s * s) * s
 
     boundary = (
-        1.0
-        + c1 * np.cos(phi + p1)
-        + c2 * np.cos(2.0 * phi + p2)
-        + c3 * np.cos(3.0 * phi + p3)
-    ).astype(np.float32)
+        np.float32(1.0)
+        + np.float32(c1 * math.cos(p1)) * c
+        - np.float32(c1 * math.sin(p1)) * s
+        + np.float32(c2 * math.cos(p2)) * c2_phi
+        - np.float32(c2 * math.sin(p2)) * s2_phi
+        + np.float32(c3 * math.cos(p3)) * c3_phi
+        - np.float32(c3 * math.sin(p3)) * s3_phi
+    )
 
     # Anti-aliased edge in pixel units (approximate local scale by harmonic mean of rx, ry).
     scale_px = np.float32(max(1.0, 2.0 * rx * ry / (rx + ry)))
     signed_px = (boundary - norm_r) * scale_px
-    patch = np.clip(signed_px + np.float32(0.5), 0.0, 1.0)
-
-    if ink_feather > 1e-4:
-        patch = _apply_ink_feather(patch, canvas, x0, y0, x1, y1, ink_feather)
+    patch = np.clip(signed_px + np.float32(0.5), np.float32(0.0), np.float32(1.0))
 
     # Subtle internal dry-brush / pencil shading streak when grain or dropout is high.
     dip_op_mult, dip_extra_drop = canvas.advance_ink_dip(style)
     grain_strength = float(np.clip(style.get("grain_strength", 0.10), 0.0, 1.0))
     ink_dropout = float(np.clip(float(style.get("ink_dropout", 0.05)) + dip_extra_drop, 0.0, 0.95))
-    if grain_strength > 0.0:
+
+    tooth: Optional[np.ndarray] = None
+    if ink_feather > 1e-4 or grain_strength > 0.0:
         tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
+
+    if ink_feather > 1e-4:
+        patch = _apply_ink_feather(patch, canvas, x0, y0, x1, y1, ink_feather, tooth=tooth)
+
+    if grain_strength > 0.0 and tooth is not None:
         patch *= np.clip(1.0 - grain_strength * (1.0 - tooth) * 1.15, 0.12, 1.0)
     if ink_dropout > 0.08:
         # Occasional subtle dry streak across the center of a filled notehead.
