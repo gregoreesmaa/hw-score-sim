@@ -325,7 +325,7 @@ DIFFICULTY_PRESETS: dict[str, dict[str, Any]] = {
         },
     },
     "wild_archive": {
-        "description": "Full historical autograph, vernacular, and archival diversity across all 184 styles.",
+        "description": "Full historical autograph, vernacular, and archival diversity across all 234 styles.",
         "jitter": 0.24,
         "interpolate_prob": 0.85,
         "legibility_tiers": (1, 2, 3, 4, 5),

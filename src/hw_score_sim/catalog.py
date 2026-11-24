@@ -1,6 +1,6 @@
 """Faceted 4-axis paleographic catalog and deterministic legibility scoring.
 
-Maps every registered scribe style (all 184 built-in + pack styles, as well as
+Maps every registered scribe style (all 234 built-in + pack styles, as well as
 any user-registered style) onto four orthogonal canonical axes without mutating
 any JSON style packs:
 

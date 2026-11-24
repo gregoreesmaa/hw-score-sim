@@ -81,7 +81,7 @@ class TestStemsFlagsBeamsRegistryAndValidation(unittest.TestCase):
 
     def test_all_existing_styles_validate_and_gain_diverse_defaults(self) -> None:
         names = list_styles()
-        self.assertGreaterEqual(len(names), 184)
+        self.assertGreaterEqual(len(names), 234)
         seen_stems = set()
         seen_flags = set()
         seen_beams = set()
@@ -108,7 +108,7 @@ class TestStemsFlagsBeamsRegistryAndValidation(unittest.TestCase):
             seen_beams.add(ba)
             seen_ledgers.add(la)
 
-        # All 184 existing styles should immediately span a wide diversity of archetypes
+        # All 234 existing styles should immediately span a wide diversity of archetypes
         self.assertGreaterEqual(len(seen_stems), 15)
         self.assertGreaterEqual(len(seen_flags), 16)
         self.assertGreaterEqual(len(seen_beams), 12)
@@ -360,7 +360,7 @@ class TestBeamLevelingAndGrouping(unittest.TestCase):
     def tearDown(self) -> None:
         reload_style_packs(reset_to_builtins=True)
 
-    def test_registries_and_184_styles_diversity(self) -> None:
+    def test_registries_and_234_styles_diversity(self) -> None:
         self.assertEqual(len(BEAM_SLOPE_STYLES), 10)
         self.assertEqual(len(set(BEAM_SLOPE_STYLES)), 10)
         self.assertEqual(len(BEAM_GROUPING_MODES), 8)

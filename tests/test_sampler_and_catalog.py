@@ -205,9 +205,9 @@ class TestDifficultyPresetsAndSampler(unittest.TestCase):
 
 
 class TestCatalogAndFilterStyles(unittest.TestCase):
-    def test_all_184_styles_mapped_cleanly(self) -> None:
+    def test_all_234_styles_mapped_cleanly(self) -> None:
         all_names = list_styles()
-        self.assertEqual(len(all_names), 184)
+        self.assertEqual(len(all_names), 234)
         self.assertEqual(filter_styles(), all_names)
 
         seen_eras: set[str] = set()
@@ -235,16 +235,16 @@ class TestCatalogAndFilterStyles(unittest.TestCase):
             seen_legibilities.add(desc["legibility"])
             seen_papers.add(desc["paper_type"])
 
-        # Every canonical value across all axes must be covered by the 184-style registry.
+        # Every canonical value across all axes must be covered by the 234-style registry.
         self.assertEqual(seen_eras, set(CANONICAL_ERAS))
         self.assertEqual(seen_media, set(CANONICAL_MEDIA))
         self.assertEqual(seen_implements, set(CANONICAL_IMPLEMENTS))
         self.assertEqual(seen_legibilities, {1, 2, 3, 4, 5})
         self.assertEqual(seen_papers, set(PAPER_TYPES))
 
-        # Verify all 25 flagship hero_* scribes exist, validate cleanly, and map across all 4 axes.
+        # Verify all 75 flagship hero_* scribes exist, validate cleanly, and map across all 4 axes.
         hero_names = [n for n in all_names if n.startswith("hero_")]
-        self.assertEqual(len(hero_names), 25)
+        self.assertEqual(len(hero_names), 75)
         for hname in hero_names:
             validate_style(get_style(hname), name=hname)
             hdesc = describe_style(hname)

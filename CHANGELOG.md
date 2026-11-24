@@ -6,19 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [0.1.1] — 2026-11-24
+## [0.2.0] — 2026-11-24
 
 ### Added
 
-- **25 Flagship Hero Scribes (`src/hw_score_sim/style_packs/hero_scribes.json`):**
-  - Expanded the registered style catalog from **159 → 184** styles across 11 curated JSON packs + 20 built-in core profiles.
-  - Adds 25 deeply researched, paleographically distinct flagship composer & copyist hands spanning five historical eras and traditions:
-    - *Renaissance & Baroque:* Palestrina Sistine Choirbook, Monteverdi Vespers Quill, Couperin Versailles Clavecin, Anna Magdalena Bach Notebook, Vivaldi Turin Concerto Rush.
-    - *Romantic Fair Copies & Opera:* Mendelssohn Leipzig Fair Copy, Clara Schumann Concert Part, Fanny Hensel Berlin Salon, Rossini Naples Opera Rush, Berlioz Paris Grand Score.
-    - *Late-Romantic & Impressionist:* Lili Boulanger Prix de Rome, Ravel Watchmaker Micro-Nib, Scriabin Ecstatic Pencil, Mussorgsky *Pictures* Iron-Gall, Mahler Vienna Blue Crayon.
-    - *20th-Century Modernist & Film:* Stravinsky Morges Fine Pen, Messiaen Birdsong Cahier, George Crumb *Makrokosmos* Fineliner, John Williams Hollywood Pencil, Ennio Morricone Cinecittà Ink.
-    - *Jazz, Tango & Contemporary:* Thelonious Monk Angular Lead Sheet, Bill Evans Jazz Pencil, Astor Piazzolla Buenos Aires Tango, Blue Note Van Gelder Ozalid, Songwriter Spiral Gel-Pen.
-  - Every hero profile passes strict `validate_style()` with zero warnings/clamps and maps cleanly across all 4 axes in `catalog.py`.
+- **75 Flagship Hero Scribes (`src/hw_score_sim/style_packs/hero_scribes.json`):**
+  - Expanded the registered style catalog from **159 → 234** styles across 11 curated JSON packs + 20 built-in core profiles (building on the initial 25 Wave-1 heroes with +50 Wave-2 heroes).
+  - Spans nine centuries and 10 major paleographic traditions:
+    - *Medieval & Renaissance (6):* Hildegard of Bingen, Josquin des Prez, Palestrina, William Byrd, Tomás Luis de Victoria, Carlo Gesualdo.
+    - *Baroque Court & Virtuosi (9):* Monteverdi, Barbara Strozzi, Buxtehude, Purcell, Couperin, Vivaldi, Rameau, Domenico Scarlatti, Anna Magdalena Bach.
+    - *Classical & Galant (5):* C.P.E. Bach, Gluck, Haydn, Boccherini, Chevalier de Saint-Georges.
+    - *Romantic Fair Copies, Opera & Virtuosi (10):* Paganini, Rossini, Berlioz, Fanny Hensel, Mendelssohn, Clara Schumann, Tchaikovsky, Dvořák, Grieg, Elgar.
+    - *Late-Romantic, Impressionist, Iberian, Nordic & Slavic (10):* Mussorgsky, Janáček, Mahler, Albéniz, Sibelius, Scriabin, Rachmaninoff, Ravel, Prokofiev, Lili Boulanger.
+    - *Second Viennese, Modernist & Avant-Garde (8):* Schoenberg, Webern, Berg, Stravinsky, Messiaen, Boulez, Xenakis, George Crumb.
+    - *American Concert & Broadway (5):* Charles Ives, George Gershwin, Aaron Copland, Leonard Bernstein, Stephen Sondheim.
+    - *Jazz, Big Band & Tango (9):* Ellington/Strayhorn, Gil Evans, Thelonious Monk, Astor Piazzolla, Charles Mingus, Miles Davis, John Coltrane, Bill Evans, Blue Note Van Gelder Ozalid.
+    - *Film, Game & Anime (7):* Erich Wolfgang Korngold, Bernard Herrmann, Ennio Morricone, John Williams, Joe Hisaishi, Ryuichi Sakamoto, Nobuo Uematsu.
+    - *Global Folk, Studio Session & Contemporary (6):* Flamenco Jerez, Odessa Klezmer, County Clare Irish Trad, Rio Choro, Abbey Road Strings, Songwriter Spiral Gel-Pen.
+  - Every single one of the 75 hero profiles passes strict `validate_style()` with zero warnings/clamps, maps cleanly across all 4 canonical axes in `catalog.py`, and clears `test_pairwise_style_diversity` (`min dist > 1.0` across all 234 styles).
 
 ---
 
