@@ -268,6 +268,100 @@ def make_manuscript_paper(
             stain_rgb = np.array([0.46, 0.30, 0.15] if is_coffee else [0.68, 0.62, 0.50], dtype=np.float32)
             img[y0:y1, x0:x1, :] = img[y0:y1, x0:x1, :] * (1.0 - alpha) + stain_rgb[None, None, :] * alpha
 
+    # 8. Extended v0.3.0 substrate structures: background grids, borders, binding hardware
+    grid_mode = str(style.get("paper_background_grid") or "none").strip().lower()
+    if grid_mode == "heavy_laid_chainlines":
+        chain_step = int(round(rng.uniform(90.0, 130.0)))
+        for xc in range(chain_step // 2, width, chain_step):
+            img[:, xc : min(width, xc + 2), :] *= np.float32(0.965)
+    elif grid_mode == "graph_5mm":
+        step = max(14, int(round(min(width, height) / 48.0)))
+        g_rgb = np.array([0.74, 0.88, 0.82], dtype=np.float32)
+        for i_y, yr in enumerate(range(0, height, step)):
+            a = np.float32(0.42 if i_y % 5 == 0 else 0.22)
+            img[yr : min(height, yr + 1), :, :] = img[yr : min(height, yr + 1), :, :] * (1.0 - a) + g_rgb * a
+        for i_x, xr in enumerate(range(0, width, step)):
+            a = np.float32(0.42 if i_x % 5 == 0 else 0.22)
+            img[:, xr : min(width, xr + 1), :] = img[:, xr : min(width, xr + 1), :] * (1.0 - a) + g_rgb * a
+    elif grid_mode == "yellow_legal_pad":
+        legal_tint = np.array([0.97, 0.93, 0.68], dtype=np.float32)
+        img = img * np.float32(0.25) + legal_tint[None, None, :] * np.float32(0.75)
+        step = max(18, int(round(height / 34.0)))
+        rule_rgb = np.array([0.62, 0.78, 0.90], dtype=np.float32)
+        for yr in range(step * 2, height - step, step):
+            img[yr : min(height, yr + 1), :, :] = img[yr : min(height, yr + 1), :, :] * 0.72 + rule_rgb * 0.28
+        mx = max(10, int(round(width * 0.095)))
+        red_rgb = np.array([0.90, 0.48, 0.50], dtype=np.float32)
+        for off in (0, 5):
+            if mx + off + 1 < width:
+                img[:, mx + off : mx + off + 2, :] = img[:, mx + off : mx + off + 2, :] * 0.62 + red_rgb * 0.38
+    elif grid_mode == "ozalid_cyan_streaks":
+        s_noise = rng.normal(0.0, 0.018, size=(height, 1)).astype(np.float32)
+        img[:, :, 0] -= s_noise * 0.4
+        img[:, :, 2] += s_noise * 0.8
+
+    border_mode = str(style.get("paper_border_mode") or "none").strip().lower()
+    if border_mode in ("single_rule_frame", "double_engraved_frame"):
+        bx0 = max(12, int(round(width * 0.032)))
+        bx1 = min(width - 12, int(round(width * 0.968)))
+        by0 = max(12, int(round(height * 0.028)))
+        by1 = min(height - 12, int(round(height * 0.972)))
+        frame_rgb = ink_rgb * np.float32(0.65) + np.float32(0.25)
+        img[by0 : by0 + 2, bx0:bx1, :] = img[by0 : by0 + 2, bx0:bx1, :] * 0.45 + frame_rgb * 0.55
+        img[by1 - 2 : by1, bx0:bx1, :] = img[by1 - 2 : by1, bx0:bx1, :] * 0.45 + frame_rgb * 0.55
+        img[by0:by1, bx0 : bx0 + 2, :] = img[by0:by1, bx0 : bx0 + 2, :] * 0.45 + frame_rgb * 0.55
+        img[by0:by1, bx1 - 2 : bx1, :] = img[by0:by1, bx1 - 2 : bx1, :] * 0.45 + frame_rgb * 0.55
+        if border_mode == "double_engraved_frame":
+            pad = 7
+            img[by0 + pad : by0 + pad + 1, bx0 + pad : bx1 - pad, :] = img[by0 + pad : by0 + pad + 1, bx0 + pad : bx1 - pad, :] * 0.55 + frame_rgb * 0.45
+            img[by1 - pad - 1 : by1 - pad, bx0 + pad : bx1 - pad, :] = img[by1 - pad - 1 : by1 - pad, bx0 + pad : bx1 - pad, :] * 0.55 + frame_rgb * 0.45
+            img[by0 + pad : by1 - pad, bx0 + pad : bx0 + pad + 1, :] = img[by0 + pad : by1 - pad, bx0 + pad : bx0 + pad + 1, :] * 0.55 + frame_rgb * 0.45
+            img[by0 + pad : by1 - pad, bx1 - pad - 1 : bx1 - pad, :] = img[by0 + pad : by1 - pad, bx1 - pad - 1 : bx1 - pad, :] * 0.55 + frame_rgb * 0.45
+    elif border_mode == "pre_ruled_header_box":
+        hy = max(24, int(round(height * 0.095)))
+        hx0, hx1 = int(width * 0.05), int(width * 0.95)
+        img[hy : hy + 2, hx0:hx1, :] = img[hy : hy + 2, hx0:hx1, :] * 0.65 + ink_rgb * 0.35
+
+    binding_mode = str(style.get("paper_binding_mode") or "none").strip().lower()
+    if binding_mode in ("three_hole_punch", "two_hole_euro"):
+        fracs = (0.14, 0.50, 0.86) if binding_mode == "three_hole_punch" else (0.35, 0.65)
+        hx = max(12.0, width * 0.032)
+        hr = max(6.0, min(width, height) * 0.016)
+        yy_b, xx_b = np.ogrid[:height, :width]
+        for yf in fracs:
+            yh = height * yf
+            y0, y1 = max(0, int(yh - hr * 1.6)), min(height, int(yh + hr * 1.6) + 1)
+            x0, x1 = max(0, int(hx - hr * 1.6)), min(width, int(hx + hr * 1.6) + 1)
+            if y1 <= y0 or x1 <= x0:
+                continue
+            d = np.hypot((yy_b[y0:y1, :] - yh).astype(np.float32), (xx_b[:, x0:x1] - hx).astype(np.float32))
+            hole = np.clip(hr + 0.5 - d, 0.0, 1.0)[..., None]
+            rim = np.exp(-0.5 * ((d - hr) / max(1.5, hr * 0.14)) ** 2)[..., None] * np.float32(0.28)
+            img[y0:y1, x0:x1, :] = img[y0:y1, x0:x1, :] * (1.0 - rim) * (1.0 - hole) + np.float32(0.18) * hole
+    elif binding_mode == "wire_spiral_left":
+        hx = max(10.0, width * 0.030)
+        hr = max(4.0, min(width, height) * 0.011)
+        step = max(24, int(round(height / 18.0)))
+        yy_b, xx_b = np.ogrid[:height, :width]
+        for yh in range(step // 2, height - step // 2, step):
+            y0, y1 = max(0, int(yh - hr * 1.5)), min(height, int(yh + hr * 1.5) + 1)
+            x0, x1 = 0, min(width, int(hx + hr * 1.6) + 1)
+            if y1 <= y0 or x1 <= x0:
+                continue
+            d = np.hypot((yy_b[y0:y1, :] - yh).astype(np.float32), (xx_b[:, x0:x1] - hx).astype(np.float32))
+            hole = np.clip(hr + 0.5 - d, 0.0, 1.0)[..., None]
+            img[y0:y1, x0:x1, :] = img[y0:y1, x0:x1, :] * (1.0 - 0.82 * hole) + np.float32(0.14) * (0.82 * hole)
+            # Metallic wire loop from page edge into hole
+            wy0, wy1 = max(0, int(yh - hr * 0.45)), min(height, int(yh + hr * 0.45) + 1)
+            wx1 = min(width, int(hx + 2))
+            if wy1 > wy0 and wx1 > 0:
+                img[wy0:wy1, 0:wx1, :] = np.float32(0.32)
+    elif binding_mode in ("book_gutter_shadow_left", "book_gutter_shadow_right"):
+        xs_g = np.arange(width, dtype=np.float32)
+        dist_edge = xs_g if binding_mode == "book_gutter_shadow_left" else (width - 1.0 - xs_g)
+        shadow = np.exp(-dist_edge / max(24.0, width * 0.065)) * np.float32(0.30)
+        img *= (1.0 - shadow[None, :, None])
+
     return np.clip(img, 0.0, 1.0).astype(np.float32, copy=False)
 
 
@@ -354,13 +448,18 @@ def compute_quirky_note_positions(
     sp: float,
     style: dict[str, Any],
     rng: np.random.Generator,
+    durations: Optional[Sequence[float]] = None,
 ) -> list[float]:
     """Compute human-like non-uniform horizontal note positions within a measure.
 
-    Applies organic beat stretching/compression, right-barline cramming
-    (``end_bar_cram``), and per-note jitter while strictly preserving monotonic
-    order (``x[i] + min_gap <= x[i+1]``) inside ``[bar_x0, bar_x1]``.
+    Applies duration-power spacing (``duration_spacing_gamma``), post-downbeat breath,
+    organic beat stretching/compression, right-barline cramming (``end_bar_cram``),
+    piecewise late-bar panic elbow (``bar_end_panic_strength``), and per-note jitter
+    while strictly preserving monotonic order (``x[i] + min_gap <= x[i+1]``) inside
+    ``[bar_x0, bar_x1]``.
     """
+    from .styles import resolve_ductus_param
+
     n = len(beat_offsets)
     if n == 0:
         return []
@@ -370,6 +469,10 @@ def compute_quirky_note_positions(
     bar_w = float(bar_x1 - bar_x0)
     spacing_jitter = float(np.clip(style.get("spacing_jitter", 0.20), 0.0, 0.80))
     end_bar_cram = float(np.clip(style.get("end_bar_cram", 0.15), 0.0, 0.80))
+    gamma = float(np.clip(resolve_ductus_param(style, "duration_spacing_gamma", 1.0), 0.12, 1.35))
+    panic_start = float(np.clip(resolve_ductus_param(style, "bar_end_panic_start", 0.68), 0.45, 0.90))
+    panic_str = float(np.clip(resolve_ductus_param(style, "bar_end_panic_strength", 0.0), 0.0, 0.85))
+    downbeat_boost = float(np.clip(resolve_ductus_param(style, "downbeat_weight_boost", 0.0), 0.0, 0.42))
 
     left_pad = min(max(0.8 * sp, 1.0), 0.14 * bar_w)
     right_pad = min(max(0.7 * sp, 1.0), 0.12 * bar_w)
@@ -388,21 +491,42 @@ def compute_quirky_note_positions(
 
     if span <= 1e-9:
         u = np.linspace(0.0, 1.0, n, dtype=np.float64)
+    elif abs(gamma - 1.0) > 1e-3 or downbeat_boost > 1e-4 or (durations is not None and len(durations) == n):
+        dt = np.maximum(np.diff(beats), 1e-4)
+        if durations is not None and len(durations) == n:
+            dur_arr = np.maximum(np.asarray(durations[:-1], dtype=np.float64), 1e-3)
+            dt = 0.5 * dt + 0.5 * dur_arr
+        du_raw = np.power(dt, gamma)
+        if downbeat_boost > 0.0 and len(du_raw) >= 1 and beats[0] <= 0.125:
+            du_raw[0] *= (1.0 + 0.55 * downbeat_boost)
+        u = np.concatenate(([0.0], np.cumsum(du_raw)))
+        u /= max(u[-1], 1e-9)
     else:
         u = (beats - b_min) / span
-        # Ensure strictly non-decreasing base parameter even if caller passes ties
         for i in range(1, n):
             if u[i] <= u[i - 1]:
                 u[i] = u[i - 1] + 1e-4
         u = (u - u[0]) / max(u[-1] - u[0], 1e-9)
 
-    # 1. Right-barline cramming: early notes spread wider, late notes squeeze near bar_x1
+    # 1. Right-barline cramming + piecewise late-bar panic elbow
     if end_bar_cram > 0.0:
         cram_amt = float(rng.uniform(0.35, 1.0)) * end_bar_cram
         power = 1.0 / (1.0 + 1.8 * cram_amt)
         u_warped = np.power(np.clip(u, 0.0, 1.0), power)
     else:
         u_warped = u.copy()
+
+    if panic_str > 0.0:
+        p_amt = float(rng.uniform(0.45, 1.0)) * panic_str
+        tail = np.maximum(0.0, u_warped - panic_start) / max(1.0 - panic_start, 1e-4)
+        elbow_compress = 1.0 - 0.62 * p_amt
+        u_warped = np.where(
+            u_warped <= panic_start,
+            u_warped * (1.0 + 0.25 * p_amt),
+            panic_start * (1.0 + 0.25 * p_amt)
+            + (1.0 - panic_start) * np.power(tail, 1.0 / (1.0 + 2.4 * p_amt)) * elbow_compress,
+        )
+        u_warped = (u_warped - u_warped[0]) / max(u_warped[-1] - u_warped[0], 1e-9)
 
     # 2. Organic per-interval stretch/compression
     du = np.diff(u_warped)

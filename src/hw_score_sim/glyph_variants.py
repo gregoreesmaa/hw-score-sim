@@ -654,7 +654,8 @@ def draw_notehead(
     Supports all 18 morphological archetypes in ``NOTEHEAD_ARCHETYPES``,
     ``notehead_aspect`` in [0.25, 2.20], and ``notehead_fill_density`` in [0.25, 1.50].
     """
-    dk = str(duration_kind).strip().lower()
+    raw_dk = str(duration_kind).strip().lower()
+    dk = raw_dk
     if dk in ("quarter", "eighth", "16th", "32nd", "black", "solid"):
         dk = "filled"
     elif dk in ("minim", "2"):
@@ -673,7 +674,17 @@ def draw_notehead(
             default_weights=_DEFAULT_NOTEHEAD_WEIGHTS,
         )
 
-    size_j = float(rng.uniform(0.90, 1.12)) * float(style.get("notehead_scale", 1.0))
+    from .styles import resolve_ductus_param
+    _raw_dur_beats = {
+        "whole": 4.0, "semibreve": 4.0, "1": 4.0,
+        "half": 2.0, "minim": 2.0, "2": 2.0,
+        "quarter": 1.0, "eighth": 0.5, "16th": 0.25, "32nd": 0.125,
+    }
+    raw_beats = _raw_dur_beats.get(raw_dk, 1.0)
+    dur_slope = float(np.clip(resolve_ductus_param(style, "duration_head_scale_slope", 0.0), -0.22, 0.25))
+    dur_scale = float(np.clip(1.0 + dur_slope * math.log2(raw_beats), 0.72, 1.28))
+
+    size_j = float(rng.uniform(0.90, 1.12)) * float(style.get("notehead_scale", 1.0)) * dur_scale
     aspect = float(np.clip(style.get("notehead_aspect", 1.0), 0.25, 2.20))
     fill_density = float(np.clip(style.get("notehead_fill_density", 1.0), 0.25, 1.50))
     rx_mult, ry_mult, stroke_mult = _notehead_aspect_scales(aspect)
@@ -681,7 +692,8 @@ def draw_notehead(
 
     base_angle = float(style.get("notehead_angle_deg", -30.0))
     ox = float(rng.normal(0.0, 0.03 * sp))
-    oy = float(rng.normal(0.0, 0.025 * sp))
+    # Hard-clamp internal oy to ±0.025*sp so combined pitch-slop <= ±0.17*sp
+    oy = float(np.clip(rng.normal(0.0, 0.020 * sp), -0.025 * sp, 0.025 * sp))
     nx, ny = cx + ox, cy + oy
 
     # ------------------------------------------------------------------
@@ -1509,12 +1521,18 @@ def draw_stem_and_flag(
     head_dir = 1.0 if stem_up else -1.0  # +1 down toward head, -1 up toward head
     tip_dir = -head_dir  # -1 up toward tip, +1 down toward tip
 
+    from .styles import resolve_ductus_param
+
     dy_raw = y1 - y0
     if scale_length and not beamed:
         len_mult = get_stem_length_multiplier(style)
         y1_eff = y0 + dy_raw * len_mult
     else:
         y1_eff = y1
+
+    len_jit_frac = float(np.clip(resolve_ductus_param(style, "stem_len_jitter_frac", 0.03), 0.0, 0.28))
+    if not beamed and len_jit_frac > 0.035:
+        y1_eff = y0 + (y1_eff - y0) * float(np.clip(1.0 + rng.normal(0.0, len_jit_frac), 0.68, 1.38))
 
     dy = y1_eff - y0
     L = max(sp * 0.8, abs(dy))
@@ -1526,6 +1544,14 @@ def draw_stem_and_flag(
     base_lean = -dy * math.tan(math.radians(float(np.clip(slant_deg, -10.0, 10.0)))) * 0.28
     tip_x = ax + (0.0 if beamed else base_lean) + float(rng.normal(0.0, 0.04 * sp))
     tip_y = y1_eff + (0.0 if beamed else tip_dir * float(rng.uniform(-0.03, 0.09)) * sp)
+
+    if beamed:
+        over_sp = float(np.clip(resolve_ductus_param(style, "beam_junction_overshoot_sp", 0.0), 0.0, 0.42))
+        gap_prob = float(np.clip(resolve_ductus_param(style, "beam_junction_gap_prob", 0.0), 0.0, 0.45))
+        if gap_prob > 0.0 and float(rng.random()) < gap_prob:
+            tip_y = y1_eff - tip_dir * float(rng.uniform(0.08, 0.28)) * sp
+        elif over_sp > 0.0 and float(rng.random()) < 0.55:
+            tip_y = y1_eff + tip_dir * float(rng.uniform(0.25, 1.0)) * over_sp * sp
 
     local_style = dict(style)
     stem_w = base_w
@@ -1885,6 +1911,16 @@ def draw_beam(
     nx, ny = -uy, ux
     if ny < 0:
         nx, ny = -nx, -ny
+
+    from .styles import resolve_ductus_param
+    extra_over = float(np.clip(resolve_ductus_param(style, "beam_edge_overhang_sp", 0.0), -0.12, 0.55))
+    if abs(extra_over) > 1e-4:
+        over_l = extra_over * float(rng.uniform(0.55, 1.25)) * sp
+        over_r = extra_over * float(rng.uniform(0.55, 1.25)) * sp
+        x0, y0 = x0 - ux * over_l, y0 - uy * over_l
+        x1, y1 = x1 + ux * over_r, y1 + uy * over_r
+        dx, dy = x1 - x0, y1 - y0
+        length = max(1e-3, math.hypot(dx, dy))
 
     arch = resolve_beam_archetype(style)
     thick_scale = float(np.clip(style.get("beam_thickness_scale", 1.0), 0.45, 2.10))
@@ -2363,31 +2399,10 @@ def draw_time_sig(
     style: dict,
     rng: np.random.Generator,
 ) -> None:
-    """Draw a hand-drawn time signature (e.g. 2/4, 3/4, 4/4, 6/8, 9/8, 12/8, 'C', 'cut')."""
-    num_s = str(num).strip().upper()
-    den_s = str(den).strip().upper()
+    """Draw a hand-drawn time signature (10 archetypes, incl. C / cut-time)."""
+    from .expressive_glyphs import draw_time_sig_variant
 
-    if num_s in ("C", "COMMON"):
-        _draw_handwritten_digit(canvas, "C", cx, cy, sp * 1.1, color_rgb, style, rng)
-        return
-    if num_s in ("CUT", "C|", "ALLA_BREVE") or den_s in ("CUT", "0"):
-        _draw_handwritten_digit(canvas, "CUT", cx, cy, sp * 1.1, color_rgb, style, rng)
-        return
-
-    def _draw_number_str(s: str, y_center: float) -> None:
-        digits = [ch for ch in s if ch.isdigit()]
-        if not digits:
-            return
-        if len(digits) == 1:
-            _draw_handwritten_digit(canvas, digits[0], cx, y_center, sp, color_rgb, style, rng)
-        else:
-            step = sp * 0.88
-            start_x = cx - 0.5 * step * (len(digits) - 1)
-            for i, ch in enumerate(digits):
-                _draw_handwritten_digit(canvas, ch, start_x + i * step, y_center, sp * 0.92, color_rgb, style, rng)
-
-    _draw_number_str(num_s, cy - 1.0 * sp)
-    _draw_number_str(den_s, cy + 1.0 * sp)
+    draw_time_sig_variant(canvas, num, den, cx, cy, sp, color_rgb, style, rng)
 
 
 # ---------------------------------------------------------------------------
@@ -2433,43 +2448,70 @@ def draw_brace(
     style: dict,
     rng: np.random.Generator,
 ) -> None:
-    """Draw a hand-drawn curly brace (or bracket if style['brace_kind'] == 'bracket')."""
-    kind = str(style.get("brace_kind", "curly")).strip().lower()
-    h = max(sp, abs(y_bot - y_top))
-    ym = 0.5 * (y_top + y_bot)
-    base_w = max(1.2, sp * float(style.get("brace_stroke_ratio", 0.22)))
+    """Draw a hand-drawn curly brace / bracket (5 archetypes via expressive_glyphs)."""
+    from .expressive_glyphs import draw_brace_variant
 
-    if kind == "bracket":
-        bx = x - sp * 0.25
-        wing = sp * rng.uniform(0.65, 0.90)
-        spine = np.array([[bx, y_top - 0.1 * sp], [bx + rng.normal(0, 0.08 * sp), ym], [bx, y_bot + 0.1 * sp]])
-        draw_calligraphic_polyline(canvas, _eval_quad(spine[0], spine[1], spine[2], 16), color_rgb, base_w * 1.4, style, kind="brace")
-        top_w = np.array([[bx, y_top - 0.1 * sp], [bx + wing * 0.5, y_top - 0.22 * sp], [bx + wing, y_top - 0.42 * sp]])
-        bot_w = np.array([[bx, y_bot + 0.1 * sp], [bx + wing * 0.5, y_bot + 0.22 * sp], [bx + wing, y_bot + 0.42 * sp]])
-        draw_calligraphic_polyline(canvas, _eval_quad(*top_w, 10), color_rgb, base_w, style, kind="brace")
-        draw_calligraphic_polyline(canvas, _eval_quad(*bot_w, 10), color_rgb, base_w, style, kind="brace")
+    draw_brace_variant(canvas, x, y_top, y_bot, sp, color_rgb, style, rng)
+
+
+def draw_cursive_ligature(
+    canvas: StrokeCanvas,
+    pattern: str,
+    p_start: Sequence[float],
+    p_end: Sequence[float],
+    sp: float,
+    color_rgb: RGBLike,
+    style: dict,
+    rng: np.random.Generator,
+    stem_dir: int = 1,
+) -> None:
+    """Draw one of 4 pen-lift-laziness cursive hairline drags."""
+    from .styles import resolve_ductus_param
+
+    p0 = np.asarray(p_start, dtype=np.float64)
+    p3 = np.asarray(p_end, dtype=np.float64)
+    dist = float(np.hypot(*(p3 - p0)))
+    if dist < 0.25 * sp or dist > 6.0 * sp:
         return
 
-    # Hand-drawn curly brace: two mirrored sweeping S-curves meeting at a central point.
-    bow_w = sp * rng.uniform(0.85, 1.15)
-    mid_tip = np.array([x - bow_w * 1.15 + rng.normal(0, 0.08 * sp), ym + rng.normal(0, 0.08 * sp)])
+    lig_op = float(np.clip(resolve_ductus_param(style, "ligature_opacity", 0.34), 0.10, 0.70))
+    local_style = dict(style)
+    base_op = float(style.get("stroke_opacity", style.get("opacity", 0.92)))
+    local_style["stroke_opacity"] = float(np.clip(base_op * lig_op * float(rng.uniform(0.75, 1.15)), 0.08, 0.65))
+    local_style["ink_dropout"] = float(np.clip(float(style.get("ink_dropout", 0.08)) + 0.26, 0.0, 0.78))
+    local_style["taper_start"] = 0.28
+    local_style["taper_end"] = 0.34
+    hair_w = max(0.45, sp * float(rng.uniform(0.045, 0.082)))
 
-    upper = _eval_cubic(
-        np.array([x + rng.normal(0, 0.06 * sp), y_top]),
-        np.array([x - bow_w * 1.05, y_top + 0.14 * h]),
-        np.array([x + bow_w * 0.20, ym - 0.16 * h]),
-        mid_tip,
-        n=18,
-    )
-    lower = _eval_cubic(
-        mid_tip,
-        np.array([x + bow_w * 0.20, ym + 0.16 * h]),
-        np.array([x - bow_w * 1.05, y_bot - 0.14 * h]),
-        np.array([x + rng.normal(0, 0.06 * sp), y_bot]),
-        n=18,
-    )
-    draw_calligraphic_polyline(canvas, upper, color_rgb, base_w * 1.15, style, kind="brace")
-    draw_calligraphic_polyline(canvas, lower, color_rgb, base_w * 1.15, style, kind="brace")
+    dx, dy = float(p3[0] - p0[0]), float(p3[1] - p0[1])
+    if pattern == "notehead_to_notehead_swoop":
+        sag = float(rng.uniform(0.28, 0.78)) * sp * (1.0 if stem_dir >= 0 else -1.0)
+        p1 = np.array([p0[0] + dx * 0.30, p0[1] + dy * 0.20 + sag])
+        p2 = np.array([p0[0] + dx * 0.72, p0[1] + dy * 0.85 + sag * 0.75])
+        pts = _eval_cubic(p0, p1, p2, p3, n=14)
+        draw_calligraphic_polyline(canvas, pts, color_rgb, hair_w, local_style, kind="ligature")
+    elif pattern == "notehead_to_stem_base_hook":
+        elbow = 0.5 * (p0 + p3) + np.array([
+            float(rng.uniform(-0.22, 0.28)) * sp,
+            float(rng.uniform(0.18, 0.42)) * sp * stem_dir,
+        ])
+        pts = _eval_quad(p0, elbow, p3, n=12)
+        draw_calligraphic_polyline(canvas, pts, color_rgb, hair_w * 1.05, local_style, kind="ligature")
+    elif pattern == "flag_to_flag_return_loop":
+        loop_y = -stem_dir * float(rng.uniform(0.35, 0.85)) * sp
+        p1 = np.array([p0[0] + max(0.35 * sp, dx * 0.38), p0[1] + loop_y])
+        p2 = np.array([p3[0] - max(0.25 * sp, dx * 0.28), p3[1] - loop_y * 0.5])
+        pts = _eval_cubic(p0, p1, p2, p3, n=18)
+        if dist > 2.2 * sp:
+            draw_calligraphic_polyline(canvas, pts[:8], color_rgb, hair_w, local_style, kind="ligature")
+            draw_calligraphic_polyline(canvas, pts[11:], color_rgb, hair_w * 0.9, local_style, kind="ligature")
+        else:
+            draw_calligraphic_polyline(canvas, pts, color_rgb, hair_w, local_style, kind="ligature")
+    else:  # "chord_roll_drag"
+        bow = float(rng.uniform(-0.24, 0.24)) * sp
+        mid = 0.5 * (p0 + p3) + np.array([bow, float(rng.normal(0.0, 0.04 * sp))])
+        pts = _eval_quad(p0, mid, p3, n=10)
+        draw_calligraphic_polyline(canvas, pts, color_rgb, hair_w * 0.95, local_style, kind="ligature")
 
 
 # ---------------------------------------------------------------------------

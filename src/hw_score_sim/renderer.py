@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 from PIL import Image
 
-from . import glyph_variants, layout_quirks, stroke_engine, styles
+from . import expressive_glyphs, glyph_variants, layout_quirks, manuscript_marks, profile_resolver, stroke_engine, styles
 from .musescore_compat import (
     CLEF_BOTTOM_DIATONIC,
     DURATION_BEATS,
@@ -114,11 +114,34 @@ def layout_score_pages(
     else:
         sp = sp_base
 
-    margin_x = float(style.get("margin_x", page_w * 0.065))
-    margin_top = float(style.get("margin_top", page_h * 0.075))
-    margin_bottom = float(style.get("margin_bottom", page_h * 0.065))
-    x_left = margin_x
-    x_right = page_w - margin_x
+    sp_scale_mult = float(np.clip(style.get("sp_scale_mult", 1.0), 0.58, 1.55))
+    sp = float(np.clip(sp * sp_scale_mult, 8.0, 26.0))
+
+    default_mx_frac = float(style.get("margin_x", page_w * 0.065)) / max(1.0, float(page_w))
+    ml_frac = float(np.clip(style.get("margin_left_frac", default_mx_frac), 0.025, 0.20))
+    mr_frac = float(np.clip(style.get("margin_right_frac", default_mx_frac), 0.025, 0.22))
+    mt_frac = float(np.clip(style.get("margin_top_frac", float(style.get("margin_top", page_h * 0.075)) / max(1.0, float(page_h))), 0.03, 0.28))
+    mb_frac = float(np.clip(style.get("margin_bottom_frac", float(style.get("margin_bottom", page_h * 0.065)) / max(1.0, float(page_h))), 0.03, 0.22))
+
+    # Reserve left clearance for binding hardware (3-hole punch / spiral / gutter)
+    bind_mode = str(style.get("paper_binding_mode") or "none").strip().lower()
+    if bind_mode in ("three_hole_punch", "wire_spiral_left", "book_gutter_shadow_left"):
+        ml_frac = max(ml_frac, 0.088)
+    furn_mode = str(style.get("page_furniture_mode") or "none").strip().lower()
+    if furn_mode != "none":
+        mt_frac = max(mt_frac, 0.135)
+
+    x_left_base = page_w * ml_frac
+    x_right_base = page_w * (1.0 - mr_frac)
+    print_w = max(200.0, x_right_base - x_left_base)
+    margin_top = page_h * mt_frac
+    margin_bottom = page_h * mb_frac
+
+    layout_mode = str(style.get("page_layout_mode") or "standard_rect").strip().lower()
+    first_indent_frac = float(np.clip(style.get("first_system_indent_frac", 0.0), 0.0, 0.28))
+    rag_jitter_frac = float(np.clip(style.get("ragged_right_jitter_frac", 0.0), 0.0, 0.22))
+    final_short_frac = float(np.clip(style.get("final_system_short_frac", 1.0), 0.32, 1.0))
+    skew_drift_px = float(np.clip(style.get("page_skew_drift_px", 0.0), -60.0, 60.0))
 
     staff_h = 4.0 * sp
     has_lyrics = any(
@@ -127,13 +150,16 @@ def layout_score_pages(
         for m in p.measures
         for ev in m.events
     )
-    intra_gap = (7.2 if has_lyrics else 6.5) * sp if n_staves > 1 else 0.0
-    inter_system_gap = (8.2 if has_lyrics else 7.5) * sp if n_staves == 1 else 6.2 * sp
+    intra_gap_mult = float(np.clip(style.get("intra_gap_mult", 1.0), 0.52, 1.85))
+    inter_gap_mult = float(np.clip(style.get("inter_system_gap_mult", 1.0), 0.42, 2.20))
+    intra_gap = ((7.2 if has_lyrics else 6.5) * sp * intra_gap_mult) if n_staves > 1 else 0.0
+    inter_system_gap = ((8.2 if has_lyrics else 7.5) * sp if n_staves == 1 else 6.2 * sp) * inter_gap_mult
     system_h = n_staves * staff_h + max(0, n_staves - 1) * intra_gap
 
     bars_per_sys_default = 4 if n_staves >= 2 else 5
     bar_width_var = float(style.get("bar_width_var", 0.12))
     prerule_prob = float(style.get("blank_prerule_prob", 0.0))
+    est_systems = max(2, int(math.ceil(max(1, total_measures) / float(bars_per_sys_default))))
 
     systems: List[SystemLayout] = []
     y_cursor = margin_top + staff_h * 0.5
@@ -141,6 +167,16 @@ def layout_score_pages(
     sys_idx = 0
 
     while y_cursor + system_h - staff_h * 0.5 <= page_h - margin_bottom:
+        prog = sys_idx / float(max(1, est_systems - 1))
+        drift = skew_drift_px * (prog - 0.5)
+        indent = print_w * first_indent_frac if sys_idx == 0 else 0.0
+        left_jit = print_w * rng.uniform(-0.018, 0.018) if layout_mode == "ragged_sketch_autograph" else 0.0
+        right_pull = print_w * rng.uniform(0.0, rag_jitter_frac) if rag_jitter_frac > 0.0 else 0.0
+        x_left = max(16.0, x_left_base + indent + drift + left_jit)
+        x_right = min(float(page_w - 16), x_right_base + drift - right_pull)
+        if x_right <= x_left + 160.0:
+            x_left, x_right = x_left_base, x_right_base
+
         if m_cursor < total_measures:
             bars_this_sys = min(
                 total_measures - m_cursor,
@@ -151,6 +187,9 @@ def layout_score_pages(
             m_start = m_cursor
             m_end = m_cursor + bars_this_sys
             m_cursor = m_end
+
+            if m_end >= total_measures and final_short_frac < 0.99 and bars_this_sys < bars_per_sys_default:
+                x_right = x_left + max(0.32, final_short_frac) * (x_right - x_left)
 
             weights: List[float] = []
             for m_i in range(m_start, m_end):
@@ -335,6 +374,8 @@ def _compute_beat_x_map(
     beat_xs: Optional[List[float]] = None
     if fn is not None and x_end > x_start + 2.0:
         try:
+            durs = [max(0.125, unique_beats[i + 1] - unique_beats[i]) for i in range(len(unique_beats) - 1)]
+            durs.append(durs[-1] if durs else 1.0)
             xs = fn(
                 beat_offsets=unique_beats,
                 bar_x0=x_start,
@@ -342,6 +383,7 @@ def _compute_beat_x_map(
                 sp=sp,
                 style=style,
                 rng=np_rng,
+                durations=durs,
             )
             if xs is not None and len(xs) == len(unique_beats):
                 beat_xs = [float(x) for x in xs]
@@ -397,17 +439,25 @@ def _compute_beat_x_map(
             i += 1
 
     ev_xs: List[float] = []
+    voices_set = {getattr(ev, "voice", 1) for ev in events}
+    cv_slop = float(np.clip(styles.resolve_ductus_param(style, "cross_voice_x_slop_sp", 0.0), 0.0, 0.42)) if len(voices_set) >= 2 else 0.0
+    prev_x_by_voice: Dict[int, float] = {}
     for idx, ev in enumerate(events):
         base_x = beat_to_x(ev.beat_offset)
         if isinstance(ev, NoteEvent) and ev.is_grace:
             tot = grace_run_total.get(idx, 1)
             pos = grace_run_pos.get(idx, 0)
-            # Tuck to the left of the beat
             gx = base_x - sp * (1.05 * (tot - pos))
             ev_xs.append(max(x_start + sp * 0.4, gx))
         else:
             nudge = getattr(ev, "x_nudge_sp", 0.0) * sp
-            ev_xs.append(min(x_end - sp * 0.3, base_x + nudge))
+            v = int(getattr(ev, "voice", 1))
+            slop = float(np.clip(np_rng.normal(0.0, cv_slop * sp), -0.42 * sp, 0.42 * sp)) if (cv_slop > 0.0 and v > 1) else 0.0
+            cand = min(x_end - sp * 0.3, max(x_start + sp * 0.4, base_x + nudge + slop))
+            if v in prev_x_by_voice and cand < prev_x_by_voice[v] + 0.65 * sp:
+                cand = min(x_end - sp * 0.3, prev_x_by_voice[v] + 0.65 * sp)
+            prev_x_by_voice[v] = cand
+            ev_xs.append(cand)
 
     return ev_xs, beat_to_x
 
@@ -504,39 +554,10 @@ def _draw_slur_or_tie(
     np_rng: np.random.Generator,
     is_tie: bool = False,
 ) -> None:
-    """Draw a tapered calligraphic hand-drawn slur or tie Bezier arc."""
-    span = max(sp * 0.8, abs(x1 - x0))
-    if is_tie:
-        height = min(sp * 1.15, max(sp * 0.55, span * 0.16))
-    else:
-        height = min(sp * 2.4, max(sp * 0.95, span * 0.18))
-    height *= float(np_rng.uniform(0.90, 1.12))
-
-    p0 = np.array([x0, y0], dtype=np.float64)
-    p3 = np.array([x1, y1], dtype=np.float64)
-    dx = x1 - x0
-    dy = y1 - y0
-    p1 = np.array([x0 + dx * 0.28, y0 + dy * 0.25 + arch_dir * height], dtype=np.float64)
-    p2 = np.array([x0 + dx * 0.72, y0 + dy * 0.75 + arch_dir * height], dtype=np.float64)
-
-    n_pts = max(14, min(48, int(span / 6.0)))
-    outer = _eval_cubic(p0, p1, p2, p3, n=n_pts)
-    local_style = dict(style)
-    local_style["taper_start"] = 0.25
-    local_style["taper_end"] = 0.25
-    base_w = max(1.0, sp * (0.14 if is_tie else 0.16))
-    stroke_mod.draw_calligraphic_polyline(canvas, outer, ink_rgb, base_w, local_style, kind="slur")
-
-    # Subtle second inner belly stroke for authentic calligraphic thickening in the middle
-    if span > sp * 1.4:
-        p1_in = p1 + np.array([0.0, -arch_dir * sp * 0.12])
-        p2_in = p2 + np.array([0.0, -arch_dir * sp * 0.12])
-        inner = _eval_cubic(p0, p1_in, p2_in, p3, n=n_pts)
-        mid_slice = inner[max(1, n_pts // 6) : max(2, n_pts - n_pts // 6)]
-        if len(mid_slice) >= 2:
-            stroke_mod.draw_calligraphic_polyline(
-                canvas, mid_slice, ink_rgb, base_w * 0.85, local_style, kind="slur"
-            )
+    """Draw a tapered calligraphic hand-drawn slur or tie Bezier arc (10 archetypes)."""
+    expressive_glyphs.draw_slur_variant(
+        canvas, x0, y0, x1, y1, arch_dir, sp, ink_rgb, style, np_rng, is_tie=is_tie
+    )
 
 
 def _draw_double_or_courtesy_accidental(
@@ -553,28 +574,11 @@ def _draw_double_or_courtesy_accidental(
     courtesy: bool = False,
 ) -> None:
     """Draw sharp/flat/natural/double_sharp/double_flat with optional courtesy parentheses."""
-    base_w = max(0.95, sp * float(style.get("acc_stroke_ratio", 0.145)))
     glyph_mod.draw_accidental(canvas, acc, cx, cy, sp, ink_rgb, style, np_rng)
-
     if courtesy:
-        # Small hand-drawn parentheses flanking the accidental
-        px_off = sp * (0.85 if acc == "double_flat" else 0.62)
-        ph = sp * 0.82
-        pw = sp * 0.24
-        left_p = _eval_quad(
-            np.array([cx - px_off + pw, cy - ph]),
-            np.array([cx - px_off - pw * 0.6, cy]),
-            np.array([cx - px_off + pw, cy + ph]),
-            n=10,
+        expressive_glyphs.draw_courtesy_brackets_variant(
+            canvas, cx, cy, sp, acc == "double_flat", ink_rgb, style, np_rng
         )
-        right_p = _eval_quad(
-            np.array([cx + px_off - pw, cy - ph]),
-            np.array([cx + px_off + pw * 0.6, cy]),
-            np.array([cx + px_off - pw, cy + ph]),
-            n=10,
-        )
-        stroke_mod.draw_calligraphic_polyline(canvas, left_p, ink_rgb, base_w * 0.78, style, kind="accidental")
-        stroke_mod.draw_calligraphic_polyline(canvas, right_p, ink_rgb, base_w * 0.78, style, kind="accidental")
 
 
 def _draw_clef_with_octave(
@@ -613,48 +617,8 @@ def _draw_articulation(
     style: Dict[str, Any],
     np_rng: np.random.Generator,
 ) -> None:
-    """Draw staccato, accent, tenuto, fermata, trill, staccatissimo, or marcato."""
-    w = max(1.0, sp * 0.14)
-    if art == "staccato":
-        r = max(1.4, sp * 0.17)
-        stroke_mod.draw_filled_blob(canvas, cx, cy, r, r, 0.0, ink_rgb, style, hollow=False)
-    elif art == "tenuto":
-        hw = sp * 0.52
-        pts = np.array([[cx - hw, cy], [cx + hw, cy + float(np_rng.normal(0.0, 0.04 * sp))]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, pts, ink_rgb, w * 1.25, style, kind="articulation")
-    elif art == "accent":
-        hw = sp * 0.58
-        hh = sp * 0.34
-        pts = np.array([[cx - hw, cy - hh], [cx + hw, cy], [cx - hw, cy + hh]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, pts, ink_rgb, w * 1.15, style, kind="articulation")
-    elif art == "marcato":
-        hw = sp * 0.36
-        hh = sp * 0.52
-        s = -1.0 if above else 1.0
-        pts = np.array([[cx - hw, cy - s * hh * 0.5], [cx, cy + s * hh * 0.6], [cx + hw, cy - s * hh * 0.5]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, pts, ink_rgb, w * 1.15, style, kind="articulation")
-    elif art == "staccatissimo":
-        hh = sp * 0.42
-        s = -1.0 if above else 1.0
-        pts = np.array([[cx, cy - s * hh], [cx, cy + s * hh * 0.6]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, pts, ink_rgb, w * 1.5, style, kind="articulation")
-    elif art == "fermata":
-        # Semicircular arch + center ink dot
-        hw = sp * 0.92
-        hh = sp * 0.78
-        s = -1.0 if above else 1.0
-        arch = _eval_cubic(
-            np.array([cx - hw, cy]),
-            np.array([cx - hw * 0.65, cy + s * hh * 1.25]),
-            np.array([cx + hw * 0.65, cy + s * hh * 1.25]),
-            np.array([cx + hw, cy]),
-            n=16,
-        )
-        stroke_mod.draw_calligraphic_polyline(canvas, arch, ink_rgb, w * 1.35, style, kind="articulation")
-        r = max(1.5, sp * 0.18)
-        stroke_mod.draw_filled_blob(canvas, cx, cy + s * hh * 0.25, r, r, 0.0, ink_rgb, style, hollow=False)
-    elif art == "trill":
-        _draw_handwritten_text(canvas, stroke_mod, "tr", cx - sp * 0.55, cy, sp * 0.95, ink_rgb, style, np_rng, italic=True)
+    """Draw staccato, accent, tenuto, fermata, trill, staccatissimo, or marcato (8 archetypes)."""
+    expressive_glyphs.draw_articulation_variant(canvas, art, cx, cy, above, sp, ink_rgb, style, np_rng)
 
 
 def _draw_tuplet_bracket(
@@ -672,30 +636,8 @@ def _draw_tuplet_bracket(
     style: Dict[str, Any],
     np_rng: np.random.Generator,
 ) -> None:
-    """Draw a hand-drawn tuplet bracket with centered handwritten numeral."""
-    w = max(0.95, sp * 0.11)
-    hook_dir = 1.0 if above else -1.0
-    hook_len = sp * 0.55
-    xm = 0.5 * (x0 + x1)
-    ym = 0.5 * (y0 + y1)
-    gap = sp * 0.72
-
-    if abs(x1 - x0) > gap * 2.2:
-        t_l = max(0.05, (xm - gap - x0) / max(1e-3, x1 - x0))
-        t_r = min(0.95, (xm + gap - x0) / max(1e-3, x1 - x0))
-        yl_g = y0 + t_l * (y1 - y0)
-        yr_g = y0 + t_r * (y1 - y0)
-        left_arm = np.array([[x0, y0 + hook_dir * hook_len], [x0, y0], [xm - gap, yl_g]], dtype=np.float64)
-        right_arm = np.array([[xm + gap, yr_g], [x1, y1], [x1, y1 + hook_dir * hook_len]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, left_arm, ink_rgb, w, style, kind="tuplet")
-        stroke_mod.draw_calligraphic_polyline(canvas, right_arm, ink_rgb, w, style, kind="tuplet")
-
-    draw_digit = getattr(glyph_mod, "_draw_handwritten_digit", None)
-    num_s = str(num)
-    if draw_digit is not None and len(num_s) == 1:
-        draw_digit(canvas, num_s, xm, ym, sp * 0.68, ink_rgb, style, np_rng)
-    else:
-        _draw_handwritten_text(canvas, stroke_mod, num_s, xm - sp * 0.3, ym, sp * 0.75, ink_rgb, style, np_rng)
+    """Draw a hand-drawn tuplet bracket with centered handwritten numeral (6 archetypes)."""
+    expressive_glyphs.draw_tuplet_variant(canvas, x0, y0, x1, y1, num, above, sp, ink_rgb, style, np_rng)
 
 
 def _draw_hairpin(
@@ -708,20 +650,11 @@ def _draw_hairpin(
     sp: float,
     ink_rgb: Any,
     style: Dict[str, Any],
+    np_rng: Optional[np.random.Generator] = None,
 ) -> None:
-    """Draw a hand-drawn crescendo (<) or diminuendo (>) hairpin wedge."""
-    if x1 <= x0 + sp * 0.4:
-        x1 = x0 + sp * 2.5
-    half_h = sp * 0.48
-    w = max(0.95, sp * 0.125)
-    if kind == "crescendo":
-        top = np.array([[x0, yc], [x1, yc - half_h]], dtype=np.float64)
-        bot = np.array([[x0, yc], [x1, yc + half_h]], dtype=np.float64)
-    else:
-        top = np.array([[x0, yc - half_h], [x1, yc]], dtype=np.float64)
-        bot = np.array([[x0, yc + half_h], [x1, yc]], dtype=np.float64)
-    stroke_mod.draw_calligraphic_polyline(canvas, top, ink_rgb, w, style, kind="hairpin")
-    stroke_mod.draw_calligraphic_polyline(canvas, bot, ink_rgb, w, style, kind="hairpin")
+    """Draw a hand-drawn crescendo (<) or diminuendo (>) hairpin wedge (8 archetypes)."""
+    rng_eff = np_rng if np_rng is not None else getattr(canvas, "rng", np.random.default_rng(0))
+    expressive_glyphs.draw_hairpin_variant(canvas, kind, x0, x1, yc, sp, ink_rgb, style, rng_eff)
 
 
 def _draw_multi_bar_rest(
@@ -737,26 +670,8 @@ def _draw_multi_bar_rest(
     style: Dict[str, Any],
     np_rng: np.random.Generator,
 ) -> None:
-    """Draw a multi-measure rest bar with end serifs and centered count numeral."""
-    pad = max(sp * 0.9, (x1 - x0) * 0.18)
-    rx0 = x0 + pad
-    rx1 = max(rx0 + sp * 1.5, x1 - pad)
-    bar_pts = np.array([[rx0, yc], [rx1, yc]], dtype=np.float64)
-    stroke_mod.draw_calligraphic_polyline(canvas, bar_pts, ink_rgb, max(2.2, sp * 0.52), style, kind="beam")
-    sw = max(1.0, sp * 0.14)
-    for sx in (rx0, rx1):
-        serif = np.array([[sx, yc - sp * 0.95], [sx, yc + sp * 0.95]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, serif, ink_rgb, sw, style, kind="barline")
-    xm = 0.5 * (rx0 + rx1)
-    ym = yc - sp * 2.85
-    draw_digit = getattr(glyph_mod, "_draw_handwritten_digit", None)
-    cs = str(count)
-    if draw_digit is not None:
-        step = sp * 0.72
-        sx0 = xm - 0.5 * step * (len(cs) - 1)
-        for i, ch in enumerate(cs):
-            if ch.isdigit():
-                draw_digit(canvas, ch, sx0 + i * step, ym, sp * 0.82, ink_rgb, style, np_rng)
+    """Draw a multi-measure rest bar with end serifs and centered count numeral (5 archetypes)."""
+    expressive_glyphs.draw_multibar_rest_variant(canvas, x0, x1, yc, count, sp, ink_rgb, style, np_rng)
 
 
 def _draw_volta_bracket(
@@ -773,20 +688,11 @@ def _draw_volta_bracket(
     style: Dict[str, Any],
     np_rng: np.random.Generator,
 ) -> None:
-    """Draw a volta repeat bracket ('1.', '2.') above the top staff."""
-    w = max(1.0, sp * 0.12)
-    hook_h = sp * 1.15
-    top_line = np.array([[x0, y_top], [x1, y_top]], dtype=np.float64)
-    stroke_mod.draw_calligraphic_polyline(canvas, top_line, ink_rgb, w, style, kind="volta")
-    if draw_left_hook:
-        lh = np.array([[x0, y_top], [x0, y_top + hook_h]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, lh, ink_rgb, w, style, kind="volta")
-        _draw_handwritten_text(
-            canvas, stroke_mod, label, x0 + sp * 0.45, y_top + sp * 0.85, sp * 0.82, ink_rgb, style, np_rng
-        )
-    if draw_right_hook:
-        rh = np.array([[x1, y_top], [x1, y_top + hook_h]], dtype=np.float64)
-        stroke_mod.draw_calligraphic_polyline(canvas, rh, ink_rgb, w, style, kind="volta")
+    """Draw a volta repeat bracket ('1.', '2.') above the top staff (5 archetypes)."""
+    expressive_glyphs.draw_volta_variant(
+        canvas, x0, x1, y_top, label, draw_left_hook, draw_right_hook, sp, ink_rgb, style, np_rng,
+        text_fn=lambda s, tx, ty, sz: _draw_handwritten_text(canvas, stroke_mod, s, tx, ty, sz, ink_rgb, style, np_rng),
+    )
 
 
 # Compact vector stroke glyphs (normalized x in [0, 0.7], y in [-0.7, 0.4], baseline at 0)
@@ -897,25 +803,90 @@ def _draw_dynamic_marking(
     style: Dict[str, Any],
     np_rng: np.random.Generator,
 ) -> None:
-    """Draw calligraphic italic dynamics (pp, p, mp, mf, f, ff, sfz, fp, etc.)."""
-    clean = text.strip().lower()
-    if not clean:
+    """Draw calligraphic italic dynamics (8 archetypes via expressive_glyphs)."""
+    expressive_glyphs.draw_dynamic_variant(canvas, text, cx, cy, sp, ink_rgb, style, np_rng)
+
+
+def _modulate_event_style(
+    base_style: Dict[str, Any],
+    beat_offset: float,
+    rel_m: int,
+    n_meas_in_sys: int,
+    u_in_bar: float,
+) -> Dict[str, Any]:
+    """Apply subtle metric downbeat weight boost & phrase-arc pressure modulation."""
+    db = float(np.clip(styles.resolve_ductus_param(base_style, "downbeat_weight_boost", 0.0), 0.0, 0.42))
+    pa = float(np.clip(styles.resolve_ductus_param(base_style, "phrase_arc_mod", 0.0), 0.0, 0.40))
+    if db <= 1e-4 and pa <= 1e-4:
+        return base_style
+    ev_style = dict(base_style)
+    is_downbeat = (beat_offset % 4.0) < 0.08
+    sys_u = (rel_m + u_in_bar) / max(1.0, float(n_meas_in_sys))
+    arc = math.sin(math.pi * float(np.clip(sys_u, 0.0, 1.0))) - 0.45
+    pressure = 1.0 + (db if is_downbeat else -0.15 * db * u_in_bar) + pa * arc
+    ev_style["stroke_scale"] = float(np.clip(float(base_style.get("stroke_scale", 1.0)) * pressure, 0.45, 2.20))
+    ev_style["notehead_fill_density"] = float(np.clip(float(base_style.get("notehead_fill_density", 1.0)) * pressure, 0.25, 1.50))
+    base_op = float(base_style.get("stroke_opacity", base_style.get("opacity", 0.92)))
+    ev_style["stroke_opacity"] = float(np.clip(base_op * (0.94 + 0.08 * pressure), 0.25, 1.0))
+    return ev_style
+
+
+def _draw_page_furniture(
+    canvas: Any,
+    score: ParsedScore,
+    systems: Sequence[SystemLayout],
+    style: Dict[str, Any],
+    np_rng: np.random.Generator,
+) -> None:
+    """Draw optional top-margin title header, composer/folio metadata, and part labels."""
+    mode = str(style.get("page_furniture_mode") or "none").strip().lower()
+    if mode == "none" or not systems:
         return
-    size_px = sp * 1.32
-    est_w = len(clean) * size_px * 0.56
-    _draw_handwritten_text(
-        canvas,
-        stroke_mod,
-        clean,
-        cx - est_w * 0.45,
-        cy + size_px * 0.25,
-        size_px,
-        ink_rgb,
-        style,
-        np_rng,
-        italic=True,
-        bold=True,
-    )
+    ink_rgb = style.get("ink_rgb", (0.14, 0.12, 0.10))
+    page_w, page_h = canvas.width, canvas.height
+    title = (score.title or "Etude in D Major").strip()
+    if len(title) > 36:
+        title = title[:36].strip()
+    top_y = max(48.0, min(float(systems[0].staves[0].y_center) - 5.6 * float(systems[0].staves[0].sp), page_h * 0.075))
+    sp0 = float(systems[0].staves[0].sp)
+
+    if mode == "jazz_realbook_chart":
+        t_up = title.upper()
+        sz = sp0 * 2.1
+        est_w = len(t_up) * sz * 0.56
+        tx = max(page_w * 0.08, 0.5 * (page_w - est_w))
+        end_x = _draw_handwritten_text(canvas, stroke_engine, t_up, tx, top_y, sz, ink_rgb, style, np_rng, bold=True)
+        stroke_engine.draw_calligraphic_polyline(
+            canvas, np.array([[tx, top_y + sp0 * 0.45], [end_x, top_y + sp0 * 0.40]], dtype=np.float64),
+            ink_rgb, max(1.8, sp0 * 0.22), style, kind="annotation",
+        )
+        _draw_handwritten_text(canvas, stroke_engine, "MEDIUM SWING", page_w * 0.74, top_y + sp0 * 1.4, sp0 * 0.95, ink_rgb, style, np_rng, bold=True)
+    elif mode == "baroque_archival_folio":
+        sz = sp0 * 1.65
+        est_w = len(title) * sz * 0.52
+        tx = max(page_w * 0.12, 0.5 * (page_w - est_w))
+        _draw_handwritten_text(canvas, stroke_engine, title, tx, top_y, sz, ink_rgb, style, np_rng, italic=True)
+        _draw_handwritten_text(canvas, stroke_engine, "fol. 4r", page_w * 0.86, top_y - sp0 * 0.2, sp0 * 0.95, ink_rgb, style, np_rng, italic=True)
+    elif mode == "orchestral_conductor_part":
+        _draw_handwritten_text(canvas, stroke_engine, "FULL SCORE", page_w * 0.08, top_y, sp0 * 1.4, ink_rgb, style, np_rng, bold=True)
+        _draw_handwritten_text(canvas, stroke_engine, title, page_w * 0.36, top_y, sp0 * 1.5, ink_rgb, style, np_rng, bold=True)
+        _draw_handwritten_text(canvas, stroke_engine, "1", page_w * 0.90, top_y, sp0 * 1.2, ink_rgb, style, np_rng, bold=True)
+    elif mode == "student_homework_sheet":
+        _draw_handwritten_text(canvas, stroke_engine, "Ex. 4", page_w * 0.11, top_y, sp0 * 1.35, ink_rgb, style, np_rng)
+        _draw_handwritten_text(canvas, stroke_engine, "10/14", page_w * 0.84, top_y, sp0 * 1.15, ink_rgb, style, np_rng)
+    elif mode == "classical_fair_copy_header":
+        sz = sp0 * 1.75
+        est_w = len(title) * sz * 0.52
+        tx = max(page_w * 0.10, 0.5 * (page_w - est_w))
+        end_x = _draw_handwritten_text(canvas, stroke_engine, title, tx, top_y, sz, ink_rgb, style, np_rng, italic=True)
+        for dy in (0.35 * sp0, 0.58 * sp0):
+            stroke_engine.draw_calligraphic_polyline(
+                canvas, np.array([[tx, top_y + dy], [end_x, top_y + dy]], dtype=np.float64),
+                ink_rgb, max(0.85, sp0 * 0.09), style, kind="annotation",
+            )
+        _draw_handwritten_text(canvas, stroke_engine, "Op. 27", page_w * 0.84, top_y + sp0 * 1.2, sp0 * 1.0, ink_rgb, style, np_rng, italic=True)
+    elif mode == "minimal_running_folio":
+        _draw_handwritten_text(canvas, stroke_engine, "- 3 -", page_w * 0.47, top_y, sp0 * 1.1, ink_rgb, style, np_rng)
 
 
 # ---------------------------------------------------------------------------
@@ -953,11 +924,12 @@ def _export_training_systems(
     for sys_lay in systems:
         if sys_lay.is_blank_prerule or not sys_lay.staves:
             continue
-        sp = sys_lay.staves[0].sp
-        top_y = min(st.y_center for st in sys_lay.staves) - 5.2 * sp
-        bot_y = max(st.y_center for st in sys_lay.staves) + 5.2 * sp
-        left_x = max(0, int(math.floor(sys_lay.x_left - 2.5 * sp)))
-        right_x = min(page_w, int(math.ceil(sys_lay.x_right + 1.5 * sp)))
+        sp = max(st.sp for st in sys_lay.staves)
+        all_cy = [pt[1] for st in sys_lay.staves for pt in (st.ctrl_pts or [[0.0, st.y_center]])]
+        top_y = min(all_cy) - 5.4 * sp
+        bot_y = max(all_cy) + 5.4 * sp
+        left_x = max(0, int(math.floor(min(st.x_left for st in sys_lay.staves) - 3.0 * sp)))
+        right_x = min(page_w, int(math.ceil(max(st.x_right for st in sys_lay.staves) + 1.8 * sp)))
         y0 = max(0, int(math.floor(top_y)))
         y1 = min(page_h, int(math.ceil(bot_y)))
 
@@ -1190,7 +1162,10 @@ def render_score_handwritten(
     MusicXML targets (plus optional bekern output when an external converter is available).
     """
     score = parse_score(score_path)
-    style = styles.get_style(style_name) if hasattr(styles, "get_style") else styles.SCRIBE_STYLES[style_name]
+    raw_style = styles.get_style(style_name) if hasattr(styles, "get_style") else styles.SCRIBE_STYLES[style_name]
+    # Merge deterministic v0.3.0 Layers 1–4 profile (explicit keys in raw_style always win)
+    style = dict(profile_resolver.resolve_page_and_expressive_profile(raw_style))
+    style.update(raw_style)
     rng = random.Random(seed)
     np_rng = np.random.default_rng(seed)
 
@@ -1219,15 +1194,23 @@ def render_score_handwritten(
     if hasattr(canvas, "buf") and canvas.buf.shape == paper_f32.shape:
         canvas.buf[:] = paper_f32
 
+    # 2b. Pre-ink living-manuscript layers (mirrored verso bleed, fold crease, foxing clusters)
+    manuscript_marks_log: List[Dict[str, Any]] = []
+    manuscript_marks.apply_pre_ink_manuscript_layers(canvas, style, np_rng, manuscript_marks_log)
+
     # 3. Compute page systems & curved staff lines
     systems = layout_score_pages(score, page_w=page_w, page_h=page_h, style=style, rng=rng)
+    _draw_page_furniture(canvas, score, systems, style, np_rng)
     gt_systems: List[Dict[str, Any]] = []
 
     for sys_lay in systems:
         sys_gt_staves: List[Dict[str, Any]] = []
         staff_curves: List[Tuple[Callable[[Any, int], Any], List[List[float]], float]] = []
 
-        # Draw 5-line curved staves
+        # Draw 5-line curved staves (rastrum coherent or independent lines)
+        ruling_mode = str(style.get("staff_ruling_mode") or "independent_lines").strip().lower()
+        use_rastrum = (ruling_mode != "independent_lines") or (float(style.get("rastrum_wobble", 0.0)) > 0.0)
+        staff_lw_ratio = float(np.clip(style.get("staff_line_width_ratio", 0.085), 0.045, 0.165))
         for st_lay in sys_lay.staves:
             y_fn_2, ctrl_pts, sp_eff = _get_staff_curve(
                 layout_quirks,
@@ -1242,17 +1225,28 @@ def render_score_handwritten(
             st_lay.ctrl_pts = ctrl_pts
             staff_curves.append((y_fn_2, ctrl_pts, sp_eff))
 
-            staff_lw = max(1.0, sp_eff * 0.085 * stroke_scale)
-            for line_idx in range(-2, 3):
-                stroke_engine.draw_staff_line(
+            staff_lw = max(1.0, sp_eff * staff_lw_ratio * stroke_scale)
+            if use_rastrum:
+                stroke_engine.draw_rastrum_staff(
                     canvas=canvas,
                     x0=st_lay.x_left,
                     x1=st_lay.x_right,
-                    y_fn=(lambda x, fn=y_fn_2, li=line_idx: fn(x, li)),
+                    y_fn=y_fn_2,
                     color_rgb=staff_ink_rgb,
                     base_width=staff_lw,
                     style=style,
                 )
+            else:
+                for line_idx in range(-2, 3):
+                    stroke_engine.draw_staff_line(
+                        canvas=canvas,
+                        x0=st_lay.x_left,
+                        x1=st_lay.x_right,
+                        y_fn=(lambda x, fn=y_fn_2, li=line_idx: fn(x, li)),
+                        color_rgb=staff_ink_rgb,
+                        base_width=staff_lw,
+                        style=style,
+                    )
 
             sys_gt_staves.append(
                 {
@@ -1498,6 +1492,15 @@ def render_score_handwritten(
 
                     beam_groups: Dict[int, List[Tuple[float, float, float, int, str]]] = {}
                     tuplet_groups: Dict[int, List[Tuple[float, float, float, int, int]]] = {}
+                    prev_note_by_voice: Dict[int, Dict[str, Any]] = {}
+                    n_meas_in_sys = max(1, sys_lay.measure_end - sys_lay.measure_start)
+                    pitch_slop = float(np.clip(styles.resolve_ductus_param(style, "pitch_y_slop_sp", 0.0), 0.0, 0.145))
+                    chord_stag = float(np.clip(styles.resolve_ductus_param(style, "chord_x_stagger_sp", 0.0), 0.0, 0.28))
+                    acc_off_sp = float(np.clip(styles.resolve_ductus_param(style, "accidental_x_offset_sp", 1.25), 0.92, 1.85))
+                    acc_jit_sp = float(np.clip(styles.resolve_ductus_param(style, "accidental_x_jitter_sp", 0.0), 0.0, 0.34))
+                    lig_prob = float(np.clip(styles.resolve_ductus_param(style, "ligature_prob", 0.0), 0.0, 0.85))
+                    center_p = float(np.clip(styles.resolve_ductus_param(style, "stem_center_mix_prob", 0.0), 0.0, 0.45))
+                    wrong_p = float(np.clip(styles.resolve_ductus_param(style, "stem_wrong_side_prob", 0.0), 0.0, 0.16))
 
                     for ev_idx, (ev, ex) in enumerate(zip(meas.events, ev_xs)):
                         yc = y_mid(ex)
@@ -1519,16 +1522,14 @@ def render_score_handwritten(
                             )
                             if ev.dots > 0:
                                 for d_i in range(ev.dots):
-                                    stroke_engine.draw_filled_blob(
+                                    expressive_glyphs.draw_augmentation_dot_variant(
                                         canvas,
                                         ex + sp * (0.85 + d_i * 0.42),
                                         ry - sp * 0.35,
-                                        max(1.4, sp * 0.14),
-                                        max(1.4, sp * 0.14),
-                                        0.0,
+                                        sp,
                                         ink_rgb,
                                         style,
-                                        hollow=False,
+                                        np_rng,
                                     )
                             for art in ev.articulations:
                                 if art == "fermata":
@@ -1558,10 +1559,17 @@ def render_score_handwritten(
                             avg_step = sum(ev.staff_steps) / len(ev.staff_steps)
                             stem_dir = -1 if avg_step >= 4.0 else 1
 
+                        u_in_bar = float(np.clip((ex - bx0) / max(1.0, bx1 - bx0), 0.0, 1.0))
+                        ev_style = _modulate_event_style(style, ev.beat_offset, rel_m, n_meas_in_sys, u_in_bar)
+
                         ys_note: List[float] = []
+                        xs_note: List[float] = []
                         step_to_y: Dict[int, float] = {}
+                        roll_lean = float(np_rng.normal(0.0, chord_stag * 0.45)) if (chord_stag > 0.0 and len(ev.staff_steps) >= 2) else 0.0
                         for h_i, (st_step, acc_kind) in enumerate(zip(ev.staff_steps, ev.accidentals)):
-                            ny = yc - (st_step - 4) * (sp * 0.5)
+                            # Hard-clamp renderer pitch-slop to ±0.145*sp (+ ±0.025*sp in draw_notehead => <= ±0.17*sp total!)
+                            y_slop = float(np.clip(np_rng.normal(0.0, pitch_slop * sp), -0.145 * sp, 0.145 * sp)) if pitch_slop > 0.0 else 0.0
+                            ny = yc - (st_step - 4) * (sp * 0.5) + y_slop
                             ys_note.append(ny)
                             step_to_y[st_step] = ny
                             hx_off = (
@@ -1569,7 +1577,12 @@ def render_score_handwritten(
                                 if h_i < len(ev.head_x_nudges_sp)
                                 else 0.0
                             )
-                            hx = ex + hx_off
+                            c_off = 0.0
+                            if chord_stag > 0.0 and len(ev.staff_steps) >= 2 and abs(hx_off) < 1e-3:
+                                rank = (h_i - 0.5 * (len(ev.staff_steps) - 1))
+                                c_off = float(np.clip(rank * roll_lean + np_rng.normal(0.0, chord_stag * 0.45), -0.32, 0.32)) * sp
+                            hx = ex + hx_off + c_off
+                            xs_note.append(hx)
 
                             if acc_kind:
                                 is_court = (
@@ -1577,16 +1590,18 @@ def render_score_handwritten(
                                     if h_i < len(ev.courtesy_accidentals)
                                     else False
                                 )
+                                ax_j = float(np.clip(np_rng.normal(0.0, acc_jit_sp), -0.36, 0.36)) * eff_sp if acc_jit_sp > 0.0 else 0.0
+                                ay_j = float(np.clip(np_rng.normal(0.0, acc_jit_sp * 0.42), -0.14, 0.14)) * eff_sp if acc_jit_sp > 0.0 else 0.0
                                 _draw_double_or_courtesy_accidental(
                                     canvas=canvas,
                                     stroke_mod=stroke_engine,
                                     glyph_mod=glyph_variants,
                                     acc=acc_kind,
-                                    cx=ex - eff_sp * (1.35 if is_court else 1.25),
-                                    cy=ny,
+                                    cx=ex - eff_sp * ((acc_off_sp + 0.10) if is_court else acc_off_sp) + ax_j,
+                                    cy=ny + ay_j,
                                     sp=eff_sp,
                                     ink_rgb=ink_rgb,
-                                    style=style,
+                                    style=ev_style,
                                     np_rng=np_rng,
                                     courtesy=is_court,
                                 )
@@ -1598,7 +1613,7 @@ def render_score_handwritten(
                                 cy=ny,
                                 sp=eff_sp,
                                 color_rgb=ink_rgb,
-                                style=style,
+                                style=ev_style,
                                 rng=np_rng,
                             )
 
@@ -1607,30 +1622,49 @@ def render_score_handwritten(
                                 dot_base_x = max(ex, hx) + sp * 0.95
                                 for d_i in range(ev.dots):
                                     dx = dot_base_x + d_i * sp * 0.45
-                                    stroke_engine.draw_filled_blob(
+                                    expressive_glyphs.draw_augmentation_dot_variant(
                                         canvas=canvas,
                                         cx=dx,
                                         cy=dot_y,
-                                        rx=max(1.5, sp * 0.14),
-                                        ry=max(1.5, sp * 0.14),
-                                        angle_deg=0.0,
+                                        sp=sp,
                                         color_rgb=ink_rgb,
-                                        style=style,
-                                        hollow=False,
+                                        style=ev_style,
+                                        rng=np_rng,
                                     )
+
+                        # Chord roll drag ligature inside multi-note chords
+                        if lig_prob > 0.0 and len(ys_note) >= 2 and float(np_rng.random()) < lig_prob * 0.55:
+                            for ci in range(len(ys_note) - 1):
+                                glyph_variants.draw_cursive_ligature(
+                                    canvas, "chord_roll_drag",
+                                    (xs_note[ci], ys_note[ci]), (xs_note[ci + 1], ys_note[ci + 1]),
+                                    sp, ink_rgb, ev_style, np_rng, stem_dir=stem_dir,
+                                )
 
                         # Stem & Flag
                         tip_y = min(ys_note) if stem_dir == 1 else max(ys_note)
+                        stem_x = ex + (eff_sp * 0.52 if stem_dir == 1 else -eff_sp * 0.52)
+                        far_y = max(ys_note) if stem_dir == 1 else min(ys_note)
+                        n_flags_ev = 0
                         if ev.duration_kind != "whole":
                             anchor_y = min(ys_note) if stem_dir == 1 else max(ys_note)
                             far_y = max(ys_note) if stem_dir == 1 else min(ys_note)
-                            stem_len_mult = glyph_variants.get_stem_length_multiplier(style)
+                            stem_len_mult = glyph_variants.get_stem_length_multiplier(ev_style)
                             stem_len = max(3.3 * eff_sp * stem_len_mult, abs(far_y - anchor_y) + 2.8 * eff_sp * stem_len_mult)
-                            stem_x = ex + (eff_sp * 0.52 if stem_dir == 1 else -eff_sp * 0.52)
+                            edge_sign = 1.0 if stem_dir == 1 else -1.0
+                            if eff_bg is None and wrong_p > 0.0 and float(np_rng.random()) < wrong_p:
+                                edge_sign = -edge_sign
+                                attach_frac = 0.48
+                            elif center_p > 0.0 and float(np_rng.random()) < center_p:
+                                attach_frac = float(np_rng.uniform(-0.10, 0.10))
+                            else:
+                                attach_frac = 0.52 + float(np_rng.normal(0.0, 0.03))
+                            stem_x = ex + edge_sign * eff_sp * attach_frac
                             tip_y = anchor_y - stem_dir * stem_len
 
                             if ev.is_grace:
                                 n_flags = max(1, {"eighth": 1, "16th": 2, "32nd": 3}.get(ev.duration_kind, 1))
+                                n_flags_ev = n_flags
                                 glyph_variants.draw_stem_and_flag(
                                     canvas=canvas,
                                     x=stem_x,
@@ -1640,21 +1674,14 @@ def render_score_handwritten(
                                     flags=n_flags,
                                     stem_up=True,
                                     color_rgb=ink_rgb,
-                                    style=style,
+                                    style=ev_style,
                                     rng=np_rng,
                                     scale_length=False,
                                 )
                                 if ev.grace_slash:
                                     sy_mid = 0.45 * far_y + 0.55 * tip_y
-                                    slash_pts = np.array(
-                                        [
-                                            [stem_x - eff_sp * 0.75, sy_mid + eff_sp * 0.65],
-                                            [stem_x + eff_sp * 0.85, sy_mid - eff_sp * 0.55],
-                                        ],
-                                        dtype=np.float64,
-                                    )
-                                    stroke_engine.draw_calligraphic_polyline(
-                                        canvas, slash_pts, ink_rgb, max(0.9, eff_sp * 0.14), style, kind="stem"
+                                    expressive_glyphs.draw_grace_slash_variant(
+                                        canvas, stem_x, sy_mid, eff_sp, ink_rgb, ev_style, np_rng
                                     )
                             elif eff_bg is not None:
                                 beam_groups.setdefault(eff_bg, []).append(
@@ -1662,6 +1689,7 @@ def render_score_handwritten(
                                 )
                             else:
                                 n_flags = {"eighth": 1, "16th": 2, "32nd": 3}.get(ev.duration_kind, 0)
+                                n_flags_ev = n_flags
                                 glyph_variants.draw_stem_and_flag(
                                     canvas=canvas,
                                     x=stem_x,
@@ -1671,10 +1699,43 @@ def render_score_handwritten(
                                     flags=n_flags,
                                     stem_up=(stem_dir == 1),
                                     color_rgb=ink_rgb,
-                                    style=style,
+                                    style=ev_style,
                                     rng=np_rng,
                                     scale_length=False,
                                 )
+
+                        # Cursive pen-lift ligatures between consecutive same-voice notes
+                        if not ev.is_grace:
+                            v_id = int(getattr(ev, "voice", 1))
+                            prev_n = prev_note_by_voice.get(v_id)
+                            cur_y_head = ys_note[0]
+                            if prev_n is not None and lig_prob > 0.0 and float(np_rng.random()) < lig_prob:
+                                u_lig = float(np_rng.random())
+                                if u_lig < 0.45:
+                                    glyph_variants.draw_cursive_ligature(
+                                        canvas, "notehead_to_notehead_swoop",
+                                        (prev_n["x"] + 0.45 * sp, prev_n["y_head"]),
+                                        (ex - 0.45 * sp, cur_y_head),
+                                        sp, ink_rgb, ev_style, np_rng, stem_dir=stem_dir,
+                                    )
+                                elif u_lig < 0.78:
+                                    glyph_variants.draw_cursive_ligature(
+                                        canvas, "notehead_to_stem_base_hook",
+                                        (prev_n["x"] + 0.40 * sp, prev_n["y_head"]),
+                                        (stem_x, far_y),
+                                        sp, ink_rgb, ev_style, np_rng, stem_dir=stem_dir,
+                                    )
+                                elif prev_n["n_flags"] > 0 or prev_n["beamed"]:
+                                    glyph_variants.draw_cursive_ligature(
+                                        canvas, "flag_to_flag_return_loop",
+                                        (prev_n["stem_x"] + 0.50 * sp, prev_n["tip_y"]),
+                                        (stem_x - 0.30 * sp, tip_y),
+                                        sp, ink_rgb, ev_style, np_rng, stem_dir=stem_dir,
+                                    )
+                            prev_note_by_voice[v_id] = {
+                                "x": ex, "y_head": cur_y_head, "stem_x": stem_x,
+                                "tip_y": tip_y, "n_flags": n_flags_ev, "beamed": eff_bg is not None,
+                            }
 
                         # Articulations & Ornaments
                         if ev.articulations:
@@ -1996,11 +2057,36 @@ def render_score_handwritten(
                 if hx1 <= hx0 + sp * 0.5:
                     hx1 = min(sys_lay.x_right - sp * 0.3, hx0 + sp * 3.5)
                 hy = y_mid(0.5 * (hx0 + hx1)) + (sp * 3.35 if hp.placement != "above" else -sp * 3.15)
-                _draw_hairpin(canvas, stroke_engine, hp.kind, hx0, hx1, hy, sp, ink_rgb, style)
+                _draw_hairpin(canvas, stroke_engine, hp.kind, hx0, hx1, hy, sp, ink_rgb, style, np_rng=np_rng)
 
-    # Optional margin annotations (boxed rehearsal marks & conductor cues)
+        # Cross-staff barlines (grand_staff_connected / full_system_connected / mensurstrich_between)
+        bar_span_mode = str(style.get("barline_span_mode") or "per_staff").strip().lower()
+        if len(sys_lay.staves) >= 2 and bar_span_mode in ("grand_staff_connected", "full_system_connected", "mensurstrich_between"):
+            for _rel_m, (_bx0, bx1) in enumerate(sys_lay.bar_x_bounds):
+                for s_a in range(len(sys_lay.staves) - 1):
+                    st_a, st_b = sys_lay.staves[s_a], sys_lay.staves[s_a + 1]
+                    if bar_span_mode == "grand_staff_connected":
+                        if st_a.brace_group is None or st_a.brace_group != st_b.brace_group:
+                            continue
+                    y_gap0 = float(staff_curves[s_a][0](bx1, 2))
+                    y_gap1 = float(staff_curves[s_a + 1][0](bx1, -2))
+                    glyph_variants.draw_barline(
+                        canvas=canvas, x=bx1, y_top=y_gap0, y_bot=y_gap1,
+                        sp=st_a.sp, kind="single", color_rgb=ink_rgb, style=style, rng=np_rng,
+                    )
+
+    # Post-notation living-manuscript overlays, corrections, chords, measure numbers, smears & wear
+    manuscript_summary = manuscript_marks.apply_post_notation_manuscript_marks(
+        canvas=canvas,
+        systems=systems,
+        style=style,
+        rng=np_rng,
+        marks_out=manuscript_marks_log,
+    )
+
+    # Optional legacy margin annotations (boxed rehearsal marks & conductor cues)
     margin_prob = float(np.clip(style.get("margin_annotations_prob", 0.0), 0.0, 1.0))
-    if margin_prob > 0.0 and float(np_rng.random()) < margin_prob:
+    if margin_prob > 0.0 and not manuscript_marks_log and float(np_rng.random()) < margin_prob:
         staff_ys = [st.y_center for s in systems if not s.is_blank_prerule for st in s.staves]
         sps = [st.sp for s in systems if not s.is_blank_prerule for st in s.staves]
         avg_sp = float(sum(sps) / len(sps)) if sps else 12.0
@@ -2021,6 +2107,9 @@ def render_score_handwritten(
         "page_h": page_h,
         "systems": gt_systems,
     }
+    if manuscript_marks_log:
+        gt_payload["manuscript_marks"] = manuscript_marks_log
+        gt_payload["manuscript_summary"] = manuscript_summary
 
     if export_train_dir is not None:
         train_exports = _export_training_systems(

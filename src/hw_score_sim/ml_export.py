@@ -422,6 +422,10 @@ def render_sample(
         "truncated": truncated,
         "systems": enriched_systems,
     }
+    if "manuscript_marks" in raw_gt:
+        meta["manuscript_marks"] = raw_gt["manuscript_marks"]
+    if "manuscript_summary" in raw_gt:
+        meta["manuscript_summary"] = raw_gt["manuscript_summary"]
 
     # Release transient float buffers from rendering promptly
     del raw_gt, parsed_score

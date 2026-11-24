@@ -606,7 +606,7 @@ def draw_staff_line(
         radii[:end_px] *= ramp
         radii[-end_px:] *= ramp[::-1]
 
-    # Ink dropout along staff line.
+    # Ink dropout along staff line + optional L->R fade + dry-nib skips.
     ink_dropout = float(np.clip(style.get("ink_dropout", 0.05) * (0.35 if pre_ruled else 0.85), 0.0, 0.9))
     col_alpha = np.ones(n, dtype=np.float32)
     if ink_dropout > 1e-4:
@@ -614,6 +614,20 @@ def draw_staff_line(
         u_noise = 1.0 / (1.0 + np.exp(-1.5 * d_noise))
         drop_scale = np.clip((u_noise - ink_dropout * 0.65) / max(0.15, ink_dropout * 0.55 + 0.15), 0.0, 1.0)
         col_alpha = ((1.0 - ink_dropout * 0.75) + (ink_dropout * 0.75) * drop_scale).astype(np.float32)
+
+    lr_fade = float(np.clip(style.get("staff_lr_fade", 0.0), -0.35, 0.55))
+    if abs(lr_fade) > 1e-4:
+        col_alpha *= np.clip(1.0 - lr_fade * t, 0.22, 1.15).astype(np.float32)
+
+    dry_skip_prob = float(np.clip(style.get("staff_dry_skip_prob", 0.0), 0.0, 0.65))
+    if dry_skip_prob > 0.0 and n > 60 and float(rng.random()) < dry_skip_prob:
+        n_skips = int(rng.integers(1, 3))
+        for _ in range(n_skips):
+            c_idx = float(rng.uniform(0.12 * n, 0.88 * n))
+            s_w = float(rng.uniform(8.0, min(55.0, n * 0.08)))
+            idx_arr = np.arange(n, dtype=np.float32)
+            notch = np.exp(-0.5 * ((idx_arr - c_idx) / max(3.0, s_w)) ** 2)
+            col_alpha *= (1.0 - 0.88 * notch).astype(np.float32)
 
     ink_feather = float(np.clip(style.get("ink_feather", 0.0) * (0.4 if pre_ruled else 0.8), 0.0, 1.0))
     feather_pad = int(math.ceil(ink_feather * 3.0)) + 1 if ink_feather > 1e-4 else 0
@@ -675,20 +689,57 @@ def draw_rastrum_staff(
     else:
         shared_wave = np.zeros(n, dtype=np.float64)
 
+    # Line-weight profile multipliers across the 5 rastrum nibs (-2..+2)
+    profile = str(style.get("staff_line_weight_profile", "uniform")).strip().lower()
+    profile_map = {
+        "uniform": (1.0, 1.0, 1.0, 1.0, 1.0),
+        "outer_heavy": (1.32, 0.92, 0.90, 0.92, 1.32),
+        "bottom_heavy": (0.85, 0.92, 1.00, 1.12, 1.28),
+        "taper_top_to_bot": (1.26, 1.12, 1.00, 0.90, 0.82),
+        "alternating_worn_rastrum": (1.14, 0.82, 1.22, 0.88, 1.18),
+    }
+    w_mults = profile_map.get(profile, (1.0, 1.0, 1.0, 1.0, 1.0))
+
+    stagger_sp = float(np.clip(style.get("staff_end_stagger_sp", 0.0), 0.0, 1.4))
+    stagger_px = stagger_sp * max(8.0, float(base_width) / 0.085)
+    mid_lift_prob = float(np.clip(style.get("staff_mid_lift_prob", 0.0), 0.0, 0.50))
+    do_splice = mid_lift_prob > 0.0 and (x1 - x0) > 220.0 and float(canvas.rng.random()) < mid_lift_prob
+    x_split = x0 + (x1 - x0) * float(canvas.rng.uniform(0.42, 0.62)) if do_splice else 0.0
+    splice_dy = float(canvas.rng.uniform(-2.0, 2.0)) if do_splice else 0.0
+
     # Slight independent line micro-wobble on top of the shared rastrum motion.
     local_style = dict(style)
     local_style["rastrum_wobble"] = 0.0
-    for idx in line_indices:
-        draw_staff_line(
-            canvas,
-            x0,
-            x1,
-            lambda x, li=idx: y_fn(x, li),
-            color_rgb,
-            base_width,
-            local_style,
-            shared_wave=shared_wave,
-        )
+    for k_i, idx in enumerate(line_indices):
+        wm = w_mults[k_i % len(w_mults)]
+        dx0 = float(canvas.rng.uniform(-stagger_px, stagger_px)) if stagger_px > 0.0 else 0.0
+        dx1 = float(canvas.rng.uniform(-stagger_px, stagger_px)) if stagger_px > 0.0 else 0.0
+        lx0 = max(0.0, x0 + dx0)
+        lx1 = min(float(canvas.width - 1), x1 + dx1)
+        if lx1 <= lx0 + 2.0:
+            lx0, lx1 = x0, x1
+        if do_splice:
+            overlap = 10.0
+            draw_staff_line(
+                canvas, lx0, min(lx1, x_split + overlap),
+                lambda x, li=idx: y_fn(x, li), color_rgb, base_width * wm, local_style, shared_wave=shared_wave,
+            )
+            draw_staff_line(
+                canvas, max(lx0, x_split - overlap * 0.5), lx1,
+                lambda x, li=idx, dy=splice_dy: np.asarray(y_fn(x, li)) + dy,
+                color_rgb, base_width * wm, local_style, shared_wave=shared_wave,
+            )
+        else:
+            draw_staff_line(
+                canvas,
+                lx0,
+                lx1,
+                lambda x, li=idx: y_fn(x, li),
+                color_rgb,
+                base_width * wm,
+                local_style,
+                shared_wave=shared_wave,
+            )
     return shared_wave
 
 

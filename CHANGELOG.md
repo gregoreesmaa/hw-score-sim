@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [0.3.0] — 2026-11-24
+
+### Added
+
+- **Hyper-Diversity Engine Across 4 Orthogonal Layers (100% Backward-Compatible):**
+  - **Layer 1 — Macro Layout, Rastrum Ruling & Physical Substrates (`renderer.py`, `stroke_engine.py`, `layout_quirks.py`):**
+    - Wired `draw_rastrum_staff` with L→R ink fade (`staff_lr_fade`), 5 per-line weight profiles (`staff_line_weight_profile`), line-end stagger, dry-nib skips, and double-pull rastrum splices.
+    - Added macro page-layout modes (first-system indent, asymmetric recto/verso margins, ragged-right autograph jitter, page skew drift, variable `sp` scale & vertical rhythm, cross-staff barlines / mensurstrich, and 6 page-furniture modes for titles, folios, and headers).
+    - Upgraded `make_manuscript_paper` with physical paper borders, 3-hole / 2-hole punches, wire spiral coils, book-gutter shadows, yellow legal pads, engineering 5 mm grids, Ozalid cyan streaks, and laid chainlines.
+  - **Layer 2 — 86 Secondary & Expressive Glyph Archetypes (`src/hw_score_sim/expressive_glyphs.py`):**
+    - 13 new registries covering slurs/ties (10), time signatures (10, activating `C` and cut-time `¢`), dynamics (8), hairpins (8), articulations & ornaments (8, incl. Keil wedges, `tr~~~`, Baroque `+`, mordents, tent/horseshoe/flat fermatas), augmentation dots (6), tuplets (6), grace slashes (5), arpeggios (5), courtesy brackets (5), braces (5), voltas (5), and multi-bar rests (5), plus deterministic `resolve_expressive_archetypes(style)`.
+  - **Layer 3 — Living Manuscript Overlays, Corrections & Wear (`src/hw_score_sim/manuscript_marks.py`):**
+    - `SafeZoneGuard` guaranteeing 100% OMR ground-truth safety (zero overlap with active notation bboxes; bounded translucent washes and smears).
+    - 8 multi-tool `ANNOTATION_PERSONAS` (red/blue conductor grease-pencil eyeglasses & rehearsal boxes, string bowings, piano `Ped.`/`*`, jazz RealBook section headers, choral breath marks, archival librarian rubber stamps, film-studio highlighter/timecodes, composer working drafts), 7 strictly off-GT `CANCELLATION_STYLES`, 4 handwritten chord-symbol vocabularies, 5 measure-number styles, left/right palm-drag smears, capillary ink blots, quill-test scribbles, caret callouts, structured mirrored verso notation bleed-through, fold creases, foxing clusters, and dog-ear/thumb wear — all logged to `gt_payload["manuscript_marks"]`.
+  - **Layer 4 — Spacing Habits, 4 Cursive Ligatures & Micro-Motor Ductus (`styles.py`, `layout_quirks.py`, `glyph_variants.py`, `renderer.py`):**
+    - 7 named `SPACING_DUCTUS_PROFILES` + `resolve_ductus_param`, duration-power rhythmic spacing (`duration_spacing_gamma`), piecewise late-bar panic cram, polyphonic cross-voice slop, duration-dependent notehead sizing, 4 cursive pen-lift ligatures (`draw_cursive_ligature`), phrase-arc & downbeat pressure modulation, stem/beam overshoot & air-gap physics, and hard-clamped `<= ±0.17 sp` OMR-safe pitch-slop.
+  - **234-Style Auto-Diversification Resolver (`src/hw_score_sim/profile_resolver.py`):**
+    - `resolve_page_and_expressive_profile(style)` automatically equips all 234 existing styles (including all 75 Hero Scribes) with era- and medium-coherent Layers 1–4 diversity while always honoring explicit overrides.
+- **8-Style Visual Showcase in `README.md` (`docs/images/showcase_01..08_*.jpg`):**
+  - Side-by-side 8-scribe showcase rendering the exact same MusicXML excerpt across 8 centuries, 6 paper stocks, 8 notehead archetypes, and 5 legibility tiers (`< 1.2 MB` total).
+
+---
+
 ## [0.2.0] — 2026-11-24
 
 ### Added

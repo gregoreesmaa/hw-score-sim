@@ -1,10 +1,21 @@
 # `hw-score-sim`
 
-**Turn any MusicXML or MuseScore file into authentic, pixel-accurate handwritten sheet music — 234 historical & modern scribe styles (including 75 flagship Hero Scribes), 164 discrete glyph archetypes + 18 beam leveling/grouping modes, infinite interpolated hands, zero MuseScore/LilyPond binaries, 100% MIT-licensed.**
+**Turn any MusicXML or MuseScore file into authentic, pixel-accurate handwritten sheet music — 234 historical & modern scribe styles (including 75 flagship Hero Scribes), 250 discrete glyph archetypes (164 structural/note + 86 expressive) + 18 beam modes, 8 living-manuscript annotation personas, 7 micro-motor ductus profiles, infinite interpolated hands, zero MuseScore/LilyPond binaries, 100% MIT-licensed.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-brightgreen.svg)](pyproject.toml)
 [![Zero External Binaries](https://img.shields.io/badge/binaries-none%20%28pure%20NumPy%20%2B%20Pillow%29-orange.svg)](ARCHITECTURE.md)
+
+---
+
+## Visual Showcase: One Score, Eight Centuries & Media
+
+> Rendered from the **exact same MusicXML excerpt** (`seed=42`) using pure procedural paleography — zero fonts, zero scanned assets, zero external binaries.
+
+| | | | |
+|:---:|:---:|:---:|:---:|
+| ![Palestrina Sistine Choirbook](docs/images/showcase_01_palestrina.jpg)<br>**Palestrina Choirbook (c. 1585)**<br><sub>Renaissance · Walnut iron-gall · Aged rag</sub><br>`hero_palestrina_sistine_choirbook` | ![Vivaldi Turin Concerto Rush](docs/images/showcase_02_vivaldi.jpg)<br>**Vivaldi Concerto Rush (c. 1728)**<br><sub>Baroque · Presto quill · Panic cram</sub><br>`hero_vivaldi_turin_concerto_rush` | ![Ravel Watchmaker Micro-Nib](docs/images/showcase_03_ravel.jpg)<br>**Ravel Watchmaker Nib (1910)**<br><sub>Impressionist · Crow-quill · Bright vellum</sub><br>`hero_ravel_watchmaker_micro_nib` | ![Mahler Vienna Blue Crayon](docs/images/showcase_04_mahler.jpg)<br>**Mahler Conductor Score (1905)**<br><sub>Late Romantic · Red/Blue crayon overlays</sub><br>`hero_mahler_vienna_blue_crayon` |
+| ![Prokofiev Telegraphic Autograph](docs/images/showcase_05_prokofiev.jpg)<br>**Prokofiev Telegraphic (1930s)**<br><sub>Modernist · Navy ink · Soviet green stock</sub><br>`hero_prokofiev_telegraphic_autograph` | ![Ellington & Strayhorn Score](docs/images/showcase_06_ellington.jpg)<br>**Ellington/Strayhorn Chart (1950s)**<br><sub>Mid-Century Jazz · Slashes & chord symbols</sub><br>`hero_ellington_strayhorn_score` | ![John Williams Hollywood Pencil](docs/images/showcase_07_williams.jpg)<br>**Hollywood Ozalid Studio (Film)**<br><sub>Scoring stage · Graphite · Ozalid blue</sub><br>`hero_john_williams_hollywood_pencil` | ![Songwriter Spiral Gel Pen](docs/images/showcase_08_songwriter.jpg)<br>**Songwriter Spiral Pad (Today)**<br><sub>Contemporary · Blue gel · Spiral & smears</sub><br>`hero_songwriter_spiral_gelpen` |
 
 ---
 
@@ -241,7 +252,7 @@ If you use `hw-score-sim` in your research or OMR training pipeline, please cite
   title        = {hw-score-sim: Procedural Handwritten Sheet-Music Rendering Engine},
   author       = {Gregor Eesmaa and hw-score-sim contributors},
   year         = {2026},
-  version      = {0.2.0},
+  version      = {0.3.0},
   license      = {MIT},
   url          = {https://github.com/gregoreesmaa/hw-score-sim}
 }

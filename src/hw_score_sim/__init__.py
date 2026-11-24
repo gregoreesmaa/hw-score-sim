@@ -2,6 +2,31 @@
 
 from __future__ import annotations
 
+from .expressive_glyphs import (
+    ARPEGGIO_ARCHETYPES,
+    ARTICULATION_ARCHETYPES,
+    BRACE_ARCHETYPES,
+    COURTESY_ARCHETYPES,
+    DOT_ARCHETYPES,
+    DYNAMIC_ARCHETYPES,
+    EXPRESSIVE_REGISTRIES,
+    GRACE_SLASH_ARCHETYPES,
+    HAIRPIN_ARCHETYPES,
+    MULTIBAR_ARCHETYPES,
+    SLUR_ARCHETYPES,
+    TIMESIG_ARCHETYPES,
+    TUPLET_ARCHETYPES,
+    VOLTA_ARCHETYPES,
+    resolve_expressive_archetypes,
+)
+from .manuscript_marks import (
+    ANNOTATION_PERSONAS,
+    CANCELLATION_STYLES,
+    CHORD_SYMBOL_STYLES,
+    MEASURE_NUMBER_STYLES,
+    PALM_SMEAR_HANDS,
+    SafeZoneGuard,
+)
 from .ml_export import (
     HandwrittenScoreDataset,
     RenderSample,
@@ -39,26 +64,30 @@ from .structural_glyphs import (
     CLEF_ARCHETYPES,
     KEYSIG_ARCHETYPES,
 )
+from .profile_resolver import resolve_page_and_expressive_profile
 from .styles import (
     BEAM_ARCHETYPES,
     BEAM_GROUPING_MODES,
     BEAM_SLOPE_STYLES,
     FLAG_ARCHETYPES,
     LEDGER_STYLES,
+    LIGATURE_PATTERNS,
     NOTEHEAD_ARCHETYPES,
     PAPER_TYPES,
     REST_ARCHETYPES,
     SCRIBE_STYLES,
+    SPACING_DUCTUS_PROFILES,
     STEM_ARCHETYPES,
     get_style,
     interpolate_styles,
     list_styles,
     register_style,
     reload_style_packs,
+    resolve_ductus_param,
     sample_random_scribe,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
@@ -102,6 +131,32 @@ __all__ = [
     "draw_pause_variant",
     "LEDGER_STYLES",
     "PAPER_TYPES",
+    # v0.3.0 Expressive archetypes, living-manuscript marks, ductus & auto-resolver
+    "EXPRESSIVE_REGISTRIES",
+    "SLUR_ARCHETYPES",
+    "TIMESIG_ARCHETYPES",
+    "DYNAMIC_ARCHETYPES",
+    "HAIRPIN_ARCHETYPES",
+    "ARTICULATION_ARCHETYPES",
+    "DOT_ARCHETYPES",
+    "TUPLET_ARCHETYPES",
+    "GRACE_SLASH_ARCHETYPES",
+    "ARPEGGIO_ARCHETYPES",
+    "COURTESY_ARCHETYPES",
+    "BRACE_ARCHETYPES",
+    "VOLTA_ARCHETYPES",
+    "MULTIBAR_ARCHETYPES",
+    "resolve_expressive_archetypes",
+    "ANNOTATION_PERSONAS",
+    "CANCELLATION_STYLES",
+    "MEASURE_NUMBER_STYLES",
+    "CHORD_SYMBOL_STYLES",
+    "PALM_SMEAR_HANDS",
+    "SafeZoneGuard",
+    "SPACING_DUCTUS_PROFILES",
+    "LIGATURE_PATTERNS",
+    "resolve_ductus_param",
+    "resolve_page_and_expressive_profile",
     # Data structures
     "ParsedScore",
     "PartData",

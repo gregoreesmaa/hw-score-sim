@@ -1048,6 +1048,59 @@ _NUMERIC_CLAMP_BOUNDS: dict[str, tuple[float, float]] = {
     "stem_length_scale": (0.65, 1.55),
     "beam_thickness_scale": (0.45, 2.10),
     "beam_split_to_flag_prob": (0.0, 1.0),
+    # v0.3.0 Layer 1: Macro layout & staff ruling
+    "first_system_indent_frac": (0.0, 0.28),
+    "margin_left_frac": (0.025, 0.20),
+    "margin_right_frac": (0.025, 0.22),
+    "margin_top_frac": (0.03, 0.28),
+    "margin_bottom_frac": (0.03, 0.22),
+    "ragged_right_jitter_frac": (0.0, 0.22),
+    "final_system_short_frac": (0.32, 1.0),
+    "page_skew_drift_px": (-60.0, 60.0),
+    "sp_scale_mult": (0.58, 1.55),
+    "intra_gap_mult": (0.52, 1.85),
+    "inter_system_gap_mult": (0.42, 2.20),
+    "system_gap_jitter_frac": (0.0, 0.35),
+    "sp_drift_per_system": (-0.08, 0.08),
+    "staff_lr_fade": (-0.35, 0.55),
+    "staff_end_stagger_sp": (0.0, 1.4),
+    "staff_dry_skip_prob": (0.0, 0.65),
+    "staff_line_width_ratio": (0.045, 0.165),
+    "staff_mid_lift_prob": (0.0, 0.50),
+    "brace_width_scale": (0.55, 1.90),
+    # v0.3.0 Layer 3: Living manuscript overlays & wear
+    "overlay_density": (0.0, 1.0),
+    "scratch_out_prob": (0.0, 1.0),
+    "chord_symbols_prob": (0.0, 1.0),
+    "measure_numbers_prob": (0.0, 1.0),
+    "ink_blot_prob": (0.0, 1.0),
+    "palm_smear_prob": (0.0, 1.0),
+    "quill_test_prob": (0.0, 1.0),
+    "caret_callout_prob": (0.0, 1.0),
+    "verso_bleed_strength": (0.0, 1.0),
+    "dog_ear_prob": (0.0, 1.0),
+    "fold_crease_prob": (0.0, 1.0),
+    "foxing_cluster_prob": (0.0, 1.0),
+    # v0.3.0 Layer 4: Spacing & micro-motor ductus
+    "duration_spacing_gamma": (0.12, 1.35),
+    "bar_end_panic_start": (0.45, 0.90),
+    "bar_end_panic_strength": (0.0, 0.85),
+    "cross_voice_x_slop_sp": (0.0, 0.42),
+    "ligature_prob": (0.0, 0.85),
+    "ligature_opacity": (0.12, 0.68),
+    "duration_head_scale_slope": (-0.22, 0.25),
+    "downbeat_weight_boost": (0.0, 0.42),
+    "phrase_arc_mod": (0.0, 0.40),
+    "stem_len_jitter_frac": (0.0, 0.28),
+    "stem_center_mix_prob": (0.0, 0.45),
+    "stem_wrong_side_prob": (0.0, 0.16),
+    "beam_junction_overshoot_sp": (0.0, 0.42),
+    "beam_junction_gap_prob": (0.0, 0.45),
+    "beam_edge_overhang_sp": (-0.12, 0.55),
+    "pitch_y_slop_sp": (0.0, 0.145),
+    "chord_x_stagger_sp": (0.0, 0.28),
+    "accidental_x_offset_sp": (0.92, 1.85),
+    "accidental_x_jitter_sp": (0.0, 0.34),
 }
 
 _OPTIONAL_NUMERIC_DEFAULTS: dict[str, float] = {
@@ -1061,7 +1114,138 @@ _OPTIONAL_NUMERIC_DEFAULTS: dict[str, float] = {
     "stem_length_scale": 1.0,
     "beam_thickness_scale": 1.0,
     "beam_split_to_flag_prob": 0.0,
+    # v0.3.0 Layer 1 neutral defaults
+    "first_system_indent_frac": 0.0,
+    "margin_left_frac": 0.065,
+    "margin_right_frac": 0.065,
+    "margin_top_frac": 0.075,
+    "margin_bottom_frac": 0.065,
+    "ragged_right_jitter_frac": 0.0,
+    "final_system_short_frac": 1.0,
+    "page_skew_drift_px": 0.0,
+    "sp_scale_mult": 1.0,
+    "intra_gap_mult": 1.0,
+    "inter_system_gap_mult": 1.0,
+    "system_gap_jitter_frac": 0.0,
+    "sp_drift_per_system": 0.0,
+    "staff_lr_fade": 0.0,
+    "staff_end_stagger_sp": 0.0,
+    "staff_dry_skip_prob": 0.0,
+    "staff_line_width_ratio": 0.085,
+    "staff_mid_lift_prob": 0.0,
+    "brace_width_scale": 1.0,
+    # v0.3.0 Layer 3 neutral defaults
+    "overlay_density": 0.0,
+    "scratch_out_prob": 0.0,
+    "chord_symbols_prob": 0.0,
+    "measure_numbers_prob": 0.0,
+    "ink_blot_prob": 0.0,
+    "palm_smear_prob": 0.0,
+    "quill_test_prob": 0.0,
+    "caret_callout_prob": 0.0,
+    "verso_bleed_strength": 0.0,
+    "dog_ear_prob": 0.0,
+    "fold_crease_prob": 0.0,
+    "foxing_cluster_prob": 0.0,
+    # v0.3.0 Layer 4 neutral defaults
+    "duration_spacing_gamma": 1.0,
+    "bar_end_panic_start": 0.68,
+    "bar_end_panic_strength": 0.0,
+    "cross_voice_x_slop_sp": 0.0,
+    "ligature_prob": 0.0,
+    "ligature_opacity": 0.34,
+    "duration_head_scale_slope": 0.0,
+    "downbeat_weight_boost": 0.0,
+    "phrase_arc_mod": 0.0,
+    "stem_len_jitter_frac": 0.03,
+    "stem_center_mix_prob": 0.0,
+    "stem_wrong_side_prob": 0.0,
+    "beam_junction_overshoot_sp": 0.0,
+    "beam_junction_gap_prob": 0.0,
+    "beam_edge_overhang_sp": 0.0,
+    "pitch_y_slop_sp": 0.0,
+    "chord_x_stagger_sp": 0.0,
+    "accidental_x_offset_sp": 1.25,
+    "accidental_x_jitter_sp": 0.0,
 }
+
+LIGATURE_PATTERNS: tuple[str, ...] = (
+    "notehead_to_notehead_swoop",
+    "notehead_to_stem_base_hook",
+    "flag_to_flag_return_loop",
+    "chord_roll_drag",
+)
+
+SPACING_DUCTUS_PROFILES: dict[str, dict[str, Any]] = {
+    "engraver_metronomic": {
+        "duration_spacing_gamma": 0.62, "bar_end_panic_start": 0.85, "bar_end_panic_strength": 0.02,
+        "cross_voice_x_slop_sp": 0.03, "ligature_prob": 0.0, "ligature_opacity": 0.22,
+        "duration_head_scale_slope": 0.03, "downbeat_weight_boost": 0.04, "phrase_arc_mod": 0.03,
+        "stem_len_jitter_frac": 0.03, "stem_center_mix_prob": 0.0, "stem_wrong_side_prob": 0.0,
+        "beam_junction_overshoot_sp": 0.03, "beam_junction_gap_prob": 0.0, "beam_edge_overhang_sp": 0.02,
+        "pitch_y_slop_sp": 0.020, "chord_x_stagger_sp": 0.02, "accidental_x_offset_sp": 1.28, "accidental_x_jitter_sp": 0.04,
+    },
+    "virtuoso_bunched_16ths": {
+        "duration_spacing_gamma": 0.42, "bar_end_panic_start": 0.66, "bar_end_panic_strength": 0.28,
+        "cross_voice_x_slop_sp": 0.18, "ligature_prob": 0.44, "ligature_opacity": 0.36,
+        "duration_head_scale_slope": 0.18, "downbeat_weight_boost": 0.16, "phrase_arc_mod": 0.26,
+        "stem_len_jitter_frac": 0.14, "stem_center_mix_prob": 0.10, "stem_wrong_side_prob": 0.0,
+        "beam_junction_overshoot_sp": 0.24, "beam_junction_gap_prob": 0.14, "beam_edge_overhang_sp": 0.34,
+        "pitch_y_slop_sp": 0.075, "chord_x_stagger_sp": 0.14, "accidental_x_offset_sp": 1.12, "accidental_x_jitter_sp": 0.18,
+    },
+    "panic_bar_end_cram": {
+        "duration_spacing_gamma": 0.50, "bar_end_panic_start": 0.56, "bar_end_panic_strength": 0.72,
+        "cross_voice_x_slop_sp": 0.26, "ligature_prob": 0.32, "ligature_opacity": 0.34,
+        "duration_head_scale_slope": 0.14, "downbeat_weight_boost": 0.10, "phrase_arc_mod": 0.22,
+        "stem_len_jitter_frac": 0.17, "stem_center_mix_prob": 0.14, "stem_wrong_side_prob": 0.02,
+        "beam_junction_overshoot_sp": 0.30, "beam_junction_gap_prob": 0.22, "beam_edge_overhang_sp": 0.28,
+        "pitch_y_slop_sp": 0.090, "chord_x_stagger_sp": 0.16, "accidental_x_offset_sp": 1.02, "accidental_x_jitter_sp": 0.22,
+    },
+    "novice_equal_spacing": {
+        "duration_spacing_gamma": 0.18, "bar_end_panic_start": 0.60, "bar_end_panic_strength": 0.48,
+        "cross_voice_x_slop_sp": 0.30, "ligature_prob": 0.08, "ligature_opacity": 0.28,
+        "duration_head_scale_slope": -0.14, "downbeat_weight_boost": 0.05, "phrase_arc_mod": 0.08,
+        "stem_len_jitter_frac": 0.22, "stem_center_mix_prob": 0.24, "stem_wrong_side_prob": 0.11,
+        "beam_junction_overshoot_sp": 0.22, "beam_junction_gap_prob": 0.28, "beam_edge_overhang_sp": -0.06,
+        "pitch_y_slop_sp": 0.110, "chord_x_stagger_sp": 0.20, "accidental_x_offset_sp": 1.52, "accidental_x_jitter_sp": 0.28,
+    },
+    "cursive_flying_ligatures": {
+        "duration_spacing_gamma": 0.54, "bar_end_panic_start": 0.70, "bar_end_panic_strength": 0.22,
+        "cross_voice_x_slop_sp": 0.16, "ligature_prob": 0.66, "ligature_opacity": 0.46,
+        "duration_head_scale_slope": 0.11, "downbeat_weight_boost": 0.14, "phrase_arc_mod": 0.24,
+        "stem_len_jitter_frac": 0.12, "stem_center_mix_prob": 0.08, "stem_wrong_side_prob": 0.0,
+        "beam_junction_overshoot_sp": 0.20, "beam_junction_gap_prob": 0.08, "beam_edge_overhang_sp": 0.42,
+        "pitch_y_slop_sp": 0.065, "chord_x_stagger_sp": 0.15, "accidental_x_offset_sp": 1.18, "accidental_x_jitter_sp": 0.14,
+    },
+    "heavy_downbeat_rubato": {
+        "duration_spacing_gamma": 0.72, "bar_end_panic_start": 0.74, "bar_end_panic_strength": 0.18,
+        "cross_voice_x_slop_sp": 0.14, "ligature_prob": 0.24, "ligature_opacity": 0.38,
+        "duration_head_scale_slope": 0.15, "downbeat_weight_boost": 0.34, "phrase_arc_mod": 0.32,
+        "stem_len_jitter_frac": 0.13, "stem_center_mix_prob": 0.06, "stem_wrong_side_prob": 0.0,
+        "beam_junction_overshoot_sp": 0.26, "beam_junction_gap_prob": 0.06, "beam_edge_overhang_sp": 0.36,
+        "pitch_y_slop_sp": 0.060, "chord_x_stagger_sp": 0.22, "accidental_x_offset_sp": 1.38, "accidental_x_jitter_sp": 0.16,
+    },
+    "tremulous_elder_hand": {
+        "duration_spacing_gamma": 0.58, "bar_end_panic_start": 0.64, "bar_end_panic_strength": 0.35,
+        "cross_voice_x_slop_sp": 0.28, "ligature_prob": 0.22, "ligature_opacity": 0.24,
+        "duration_head_scale_slope": 0.06, "downbeat_weight_boost": 0.12, "phrase_arc_mod": 0.18,
+        "stem_len_jitter_frac": 0.24, "stem_center_mix_prob": 0.20, "stem_wrong_side_prob": 0.04,
+        "beam_junction_overshoot_sp": 0.28, "beam_junction_gap_prob": 0.36, "beam_edge_overhang_sp": 0.18,
+        "pitch_y_slop_sp": 0.130, "chord_x_stagger_sp": 0.24, "accidental_x_offset_sp": 1.44, "accidental_x_jitter_sp": 0.26,
+    },
+}
+
+
+def resolve_ductus_param(style: dict[str, Any], key: str, fallback: Any) -> Any:
+    """Resolve a ductus parameter: explicit style key > named profile > fallback."""
+    if key in style and style[key] is not None:
+        return style[key]
+    prof_name = style.get("spacing_ductus_profile")
+    if isinstance(prof_name, str) and prof_name in SPACING_DUCTUS_PROFILES:
+        prof = SPACING_DUCTUS_PROFILES[prof_name]
+        if key in prof:
+            return prof[key]
+    return fallback
 
 _INTERPOLATABLE_NUMERIC_KEYS: tuple[str, ...] = tuple(_NUMERIC_CLAMP_BOUNDS.keys())
 _RGB_KEYS: tuple[str, ...] = ("ink_rgb", "staff_ink_rgb", "paper_rgb")
@@ -1514,16 +1698,28 @@ def interpolate_styles(
             if disc_key in sa or disc_key in sb:
                 out[disc_key] = vb if _pick_b() else va
 
-    # Optional 30-pause discrete archetypes
-    for pause_key in ("pause_archetype", "flagged_rest_archetype", "bar_rest_archetype"):
-        va = sa.get(pause_key)
-        vb = sb.get(pause_key)
+    # Optional 30-pause discrete archetypes + v0.3.0 optional discrete keys
+    for opt_disc_key in (
+        "pause_archetype", "flagged_rest_archetype", "bar_rest_archetype",
+        "page_layout_mode", "vertical_rhythm_mode", "staff_ruling_mode",
+        "staff_line_weight_profile", "page_furniture_mode", "barline_span_mode",
+        "left_barline_mode", "paper_border_mode", "paper_binding_mode",
+        "paper_background_grid", "annotation_persona", "cancellation_style",
+        "measure_number_style", "chord_symbol_style", "palm_smear_hand",
+        "spacing_ductus_profile", "slur_archetype", "timesig_archetype",
+        "dynamic_archetype", "hairpin_archetype", "articulation_archetype",
+        "dot_archetype", "tuplet_archetype", "grace_slash_archetype",
+        "arpeggio_archetype", "courtesy_archetype", "brace_archetype",
+        "volta_archetype", "multibar_archetype",
+    ):
+        va = sa.get(opt_disc_key)
+        vb = sb.get(opt_disc_key)
         if va is not None or vb is not None:
-            chosen_pause = vb if _pick_b() else va
-            if chosen_pause is not None:
-                out[pause_key] = chosen_pause
+            chosen_v = vb if _pick_b() else va
+            if chosen_v is not None:
+                out[opt_disc_key] = chosen_v
             else:
-                out.pop(pause_key, None)
+                out.pop(opt_disc_key, None)
 
     # Interpolate RGB tuples
     for rgb_key in _RGB_KEYS:
@@ -1710,6 +1906,22 @@ def sample_random_scribe(
             scribe["beam_split_to_flag_prob"] = float(np.clip(rng.uniform(0.08, 0.35), 0.0, 1.0))
         else:
             scribe["beam_split_to_flag_prob"] = 0.0
+
+    # Sample paper_type, expressive archetypes (86), ductus profile (7), and optional living-manuscript layers
+    if base_style is None or (j > 0.0 and rng.random() < 0.40):
+        scribe["paper_type"] = str(PAPER_TYPES[int(rng.integers(0, len(PAPER_TYPES)))])
+
+    from .expressive_glyphs import EXPRESSIVE_REGISTRIES, resolve_expressive_archetypes
+    resolved_expr = resolve_expressive_archetypes(scribe)
+    for k, reg in EXPRESSIVE_REGISTRIES.items():
+        if base_style is None or (j > 0.0 and rng.random() < 0.55):
+            scribe[k] = str(reg[int(rng.integers(0, len(reg)))])
+        elif k not in scribe:
+            scribe[k] = resolved_expr[k]
+
+    if base_style is None or (j > 0.0 and rng.random() < 0.55):
+        ductus_names = tuple(SPACING_DUCTUS_PROFILES.keys())
+        scribe["spacing_ductus_profile"] = str(ductus_names[int(rng.integers(0, len(ductus_names)))])
 
     token = int(rng.integers(0, 16**6))
     scribe["name"] = f"sampled_scribe_{token:06x}"
