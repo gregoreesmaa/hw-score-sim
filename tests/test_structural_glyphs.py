@@ -300,6 +300,34 @@ class TestStructuralGlyphs(unittest.TestCase):
             gv.draw_barline(canvas, 225.0, 40.0, 104.0, sp, "repeat-right", (0.1, 0.1, 0.1), st, r)
         self.assertGreater(_l1_diff(c_a.buf, c_b.buf), 0.005)
 
+    def test_precedence_baroque_tremor_jazz_over_wild_and_heavy_stroke(self) -> None:
+        # Wild Baroque style must get baroque_ornate_scroll, not beethoven_wild_slash
+        wild_baroque = dict(BASE_STYLE, name="wild_hist_vivaldi_baroque", era="baroque", clef_ornate=0.90)
+        c, k, b = sg.resolve_structural_archetypes(wild_baroque)
+        self.assertEqual(c, "baroque_ornate_scroll")
+        self.assertEqual(k, "baroque_vertical_flat")
+        self.assertEqual(b, "tapered_quill_bar")
+
+        # Heavy Bach iron-gall (stroke_scale >= 1.45) must get baroque_vertical_flat, not jazz_heavy_marker_acc
+        heavy_bach = dict(BASE_STYLE, name="bach_thick_iron_gall", era="baroque", stroke_scale=1.52)
+        c2, k2, b2 = sg.resolve_structural_archetypes(heavy_bach)
+        self.assertEqual(c2, "baroque_ornate_scroll")
+        self.assertEqual(k2, "baroque_vertical_flat")
+        self.assertEqual(b2, "tapered_quill_bar")
+
+        # Wild arthritis tremor must get tremor_shaky_clef, not beethoven_wild_slash
+        wild_tremor = dict(BASE_STYLE, name="wild_ext_arthritis_tremor", era="contemporary", tremor_px=2.1)
+        c3, _, b3 = sg.resolve_structural_archetypes(wild_tremor)
+        self.assertEqual(c3, "tremor_shaky_clef")
+        self.assertEqual(b3, "s_wobble_freehand")
+
+        # Wild Real Book must get jazz_realbook_bold, not beethoven_wild_slash
+        wild_jazz = dict(BASE_STYLE, name="wild_vern_realbook_70s_felt_tip", era="1970s_jazz")
+        c4, k4, b4 = sg.resolve_structural_archetypes(wild_jazz)
+        self.assertEqual(c4, "jazz_realbook_bold")
+        self.assertEqual(k4, "jazz_heavy_marker_acc")
+        self.assertEqual(b4, "heavy_thick_marker")
+
 
 if __name__ == "__main__":
     unittest.main()

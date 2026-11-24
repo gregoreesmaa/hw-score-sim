@@ -83,6 +83,27 @@ class StrokeCanvas:
         self.buf[:, :, 1] = self.bg_rgb[1]
         self.buf[:, :, 2] = self.bg_rgb[2]
         self._tooth_tile: Optional[np.ndarray] = None
+        self._stroke_count: int = 0
+
+    def advance_ink_dip(self, style: dict) -> tuple[float, float]:
+        """Advance stateful quill/dip-nib ink depletion sawtooth cycle.
+
+        Returns ``(opacity_mult, extra_dropout)``. When ``ink_dip_period`` is
+        ``0`` (default), returns ``(1.0, 0.0)`` with zero effect.
+        """
+        period = int(round(float(style.get("ink_dip_period", 0))))
+        if period <= 0:
+            return 1.0, 0.0
+        pos = self._stroke_count % period
+        self._stroke_count += 1
+        frac = pos / float(max(period - 1, 1))
+        # Fresh-dip surge -> smooth depletion -> abrupt re-dip sawtooth
+        if frac < 0.15:
+            opacity_mult = 1.08 - 0.53 * frac
+        else:
+            opacity_mult = 1.0 - 0.34 * ((frac - 0.15) / 0.85)
+        extra_dropout = 0.0 if frac < 0.35 else 0.22 * ((frac - 0.35) / 0.65)
+        return float(opacity_mult), float(extra_dropout)
 
     def get_tooth_patch(self, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
         """Return paper-tooth texture values in [0, 1] for [y0:y1, x0:x1]."""
@@ -332,6 +353,8 @@ def draw_calligraphic_polyline(
     bw = max(0.35, float(base_width) * width_scale)
     grain_strength = float(np.clip(style.get("grain_strength", 0.10), 0.0, 1.0))
     ink_rgb, stroke_opacity = _perturb_ink_color(color_rgb, style, rng)
+    dip_op_mult, dip_extra_drop = canvas.advance_ink_dip(style)
+    stroke_opacity = float(np.clip(stroke_opacity * dip_op_mult, 0.12, 1.0))
 
     if len(pts_arr) == 1:
         r = np.array([max(0.5, bw * 0.5)], dtype=np.float64)
@@ -448,7 +471,7 @@ def draw_calligraphic_polyline(
             pool_strengths = np.clip(curv * min(1.0, ink_pool * 1.4), 0.0, 1.0).astype(np.float32)
 
     # 5. Dry-brush / ink-skip dropout along stroke.
-    ink_dropout = float(np.clip(style.get("ink_dropout", 0.05), 0.0, 0.95))
+    ink_dropout = float(np.clip(float(style.get("ink_dropout", 0.05)) + dip_extra_drop, 0.0, 0.95))
     if ink_dropout > 1e-4:
         n_drop_knots = max(4, int(total_len / 5.5) + 2)
         d_noise = _smooth_1d_noise(rng, len(res_pts), n_drop_knots)
@@ -461,20 +484,25 @@ def draw_calligraphic_polyline(
     ink_feather = float(np.clip(style.get("ink_feather", 0.0), 0.0, 1.0))
     radii = np.maximum(0.28, 0.5 * widths)
 
-    # 6. Optional split-nib double-edge (parted quill/fountain-pen tines).
+    # 6. Optional pressure-gated split-nib double-edge (parted quill/fountain-pen tines).
     split_nib_prob = float(np.clip(style.get("split_nib_prob", 0.0), 0.0, 1.0))
     if split_nib_prob > 0.0 and bw >= 1.2 and total_len > 4.0 and float(rng.random()) < split_nib_prob:
         g2norm = np.hypot(grad2[:, 0], grad2[:, 1])
         g2norm = np.where(g2norm > 1e-7, g2norm, 1.0)
         nx2 = -grad2[:, 1] / g2norm
         ny2 = grad2[:, 0] / g2norm
-        sep = np.maximum(0.45, radii * (0.45 + 0.25 * env))
+        # Gate railroading by downstroke pressure (nib_factor * env > 0.55) so
+        # tapered entry/exit remain unified while flexed bellies railroad naturally.
+        pressure_gate = np.clip((nib_factor * env - 0.55) / 0.30, 0.0, 1.0)
+        sep = np.maximum(0.45, radii * (0.45 + 0.25 * env)) * pressure_gate
+        r_hi = np.maximum(0.25, radii * (1.0 - 0.44 * pressure_gate))
+        r_lo = np.maximum(0.25, radii * (1.0 - 0.52 * pressure_gate))
         _stamp_discs_to_canvas(
             canvas,
             res_pts[:, 0] + nx2 * sep,
             res_pts[:, 1] + ny2 * sep,
-            np.maximum(0.25, radii * 0.56),
-            alphas * 0.92,
+            r_hi,
+            alphas * (1.0 - 0.08 * pressure_gate),
             ink_rgb,
             stroke_opacity,
             grain_strength,
@@ -485,8 +513,8 @@ def draw_calligraphic_polyline(
             canvas,
             res_pts[:, 0] - nx2 * sep,
             res_pts[:, 1] - ny2 * sep,
-            np.maximum(0.25, radii * 0.48),
-            alphas * 0.78,
+            r_lo,
+            alphas * (1.0 - 0.22 * pressure_gate),
             ink_rgb,
             stroke_opacity,
             grain_strength,
@@ -778,8 +806,9 @@ def draw_filled_blob(
         patch = _apply_ink_feather(patch, canvas, x0, y0, x1, y1, ink_feather)
 
     # Subtle internal dry-brush / pencil shading streak when grain or dropout is high.
+    dip_op_mult, dip_extra_drop = canvas.advance_ink_dip(style)
     grain_strength = float(np.clip(style.get("grain_strength", 0.10), 0.0, 1.0))
-    ink_dropout = float(np.clip(style.get("ink_dropout", 0.05), 0.0, 0.95))
+    ink_dropout = float(np.clip(float(style.get("ink_dropout", 0.05)) + dip_extra_drop, 0.0, 0.95))
     if grain_strength > 0.0:
         tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
         patch *= np.clip(1.0 - grain_strength * (1.0 - tooth) * 1.15, 0.12, 1.0)
@@ -790,5 +819,6 @@ def draw_filled_blob(
         patch *= np.float32(1.0 - 0.35 * ink_dropout) + np.float32(0.35 * ink_dropout) * streak
 
     ink_rgb, stroke_opacity = _perturb_ink_color(color_rgb, style, rng)
+    stroke_opacity = float(np.clip(stroke_opacity * dip_op_mult, 0.12, 1.0))
     patch *= np.float32(stroke_opacity)
     canvas.composite_patch(x0, y0, x1, y1, patch, ink_rgb)

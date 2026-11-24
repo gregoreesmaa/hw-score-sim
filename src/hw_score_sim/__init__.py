@@ -27,6 +27,13 @@ from .renderer import (
     render_score,
     render_score_handwritten,
 )
+from .rest_variants import (
+    ALL_NEW_PAUSE_ARCHETYPES,
+    BAR_REST_ARCHETYPES,
+    FLAGGED_REST_ARCHETYPES,
+    NEW_QUARTER_REST_ARCHETYPES,
+    draw_pause_variant,
+)
 from .structural_glyphs import (
     BARLINE_ARCHETYPES,
     CLEF_ARCHETYPES,
@@ -88,6 +95,11 @@ __all__ = [
     "KEYSIG_ARCHETYPES",
     "BARLINE_ARCHETYPES",
     "REST_ARCHETYPES",
+    "NEW_QUARTER_REST_ARCHETYPES",
+    "FLAGGED_REST_ARCHETYPES",
+    "BAR_REST_ARCHETYPES",
+    "ALL_NEW_PAUSE_ARCHETYPES",
+    "draw_pause_variant",
     "LEDGER_STYLES",
     "PAPER_TYPES",
     # Data structures

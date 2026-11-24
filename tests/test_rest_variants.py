@@ -193,6 +193,62 @@ class TestRestVariantsRendering(unittest.TestCase):
         with self.assertRaises(ValueError):
             draw_pause_variant(c, "unknown_pause", 60.0, 60.0, 16.0, INK_RGB, BASE_STYLE, rng)
 
+    def test_wiring_exports_styles_validation_and_draw_rest_dispatch(self) -> None:
+        import hw_score_sim as hss
+        from hw_score_sim import glyph_variants as gv
+        from hw_score_sim import styles as styles_mod
+
+        # Top-level and styles.py re-exports
+        for mod in (hss, styles_mod):
+            self.assertEqual(mod.NEW_QUARTER_REST_ARCHETYPES, NEW_QUARTER_REST_ARCHETYPES)
+            self.assertEqual(mod.FLAGGED_REST_ARCHETYPES, FLAGGED_REST_ARCHETYPES)
+            self.assertEqual(mod.BAR_REST_ARCHETYPES, BAR_REST_ARCHETYPES)
+            self.assertEqual(mod.ALL_NEW_PAUSE_ARCHETYPES, ALL_NEW_PAUSE_ARCHETYPES)
+            self.assertIs(mod.draw_pause_variant, draw_pause_variant)
+
+        # Validation of optional pause keys
+        base = styles_mod.get_style("baroque_quill_neat")
+        valid = styles_mod.validate_style(
+            dict(
+                base,
+                pause_archetype="baroque_reversed_r",
+                flagged_rest_archetype="baroque_curved_flag",
+                bar_rest_archetype="slanted_wedge_bar",
+            ),
+            name="test_pause_valid",
+        )
+        self.assertEqual(valid["pause_archetype"], "baroque_reversed_r")
+        self.assertEqual(valid["flagged_rest_archetype"], "baroque_curved_flag")
+        self.assertEqual(valid["bar_rest_archetype"], "slanted_wedge_bar")
+
+        for bad_kw in (
+            {"pause_archetype": "not_a_pause"},
+            {"flagged_rest_archetype": "not_a_flagged_rest"},
+            {"bar_rest_archetype": "not_a_bar_rest"},
+        ):
+            with self.assertRaises(ValueError):
+                styles_mod.validate_style(dict(base, **bad_kw), name="test_pause_bad")
+
+        # sample_random_scribe samples pause keys cleanly
+        rng = np.random.default_rng(777)
+        sampled = styles_mod.sample_random_scribe(rng, jitter=0.2)
+        self.assertIn(sampled["pause_archetype"], NEW_QUARTER_REST_ARCHETYPES)
+        self.assertIn(sampled["flagged_rest_archetype"], FLAGGED_REST_ARCHETYPES)
+        self.assertIn(sampled["bar_rest_archetype"], BAR_REST_ARCHETYPES)
+
+        # glyph_variants.draw_rest dispatches cleanly to rest_variants.draw_pause_variant
+        for kind, key, arch in (
+            ("quarter", "pause_archetype", "beethoven_violent_zig"),
+            ("eighth", "flagged_rest_archetype", "heavy_marker_7"),
+            ("whole", "bar_rest_archetype", "hollow_box_sketch"),
+        ):
+            c_via_draw_rest = StrokeCanvas(110, 130, PAPER_BG, rng=np.random.default_rng(42))
+            c_direct = StrokeCanvas(110, 130, PAPER_BG, rng=np.random.default_rng(42))
+            st = dict(BASE_STYLE, **{key: arch})
+            gv.draw_rest(c_via_draw_rest, kind, 55.0, 65.0, 18.0, INK_RGB, st, np.random.default_rng(99))
+            draw_pause_variant(c_direct, kind, 55.0, 65.0, 18.0, INK_RGB, st, np.random.default_rng(99), archetype=arch)
+            np.testing.assert_array_equal(c_via_draw_rest.to_uint8(), c_direct.to_uint8())
+
 
 if __name__ == "__main__":
     unittest.main()

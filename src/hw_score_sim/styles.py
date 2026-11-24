@@ -15,6 +15,13 @@ from typing import Any, Optional, Union
 
 import numpy as np
 
+from .rest_variants import (
+    ALL_NEW_PAUSE_ARCHETYPES,
+    BAR_REST_ARCHETYPES,
+    FLAGGED_REST_ARCHETYPES,
+    NEW_QUARTER_REST_ARCHETYPES,
+    draw_pause_variant,
+)
 from .structural_glyphs import (
     BARLINE_ARCHETYPES,
     CLEF_ARCHETYPES,
@@ -255,7 +262,9 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "notehead_scale": 1.02,
         "notehead_angle_deg": -32.0,
         "hollow_open_prob": 0.12,
-        "rest_archetype_weights": _weights(0.03, 0.12, 0.10, 0.02, 0.58, 0.15),
+        "rest_archetype_weights": _weights(0.02, 0.38, 0.08, 0.02, 0.18, 0.10, 0.0, 0.22, 0.0, 0.0),
+        "ink_dip_period": 24,
+        "rastrum_wobble": 1.2,
         "clef_ornate": 0.90,
         "barline_overshoot_sp": 0.28,
         "spacing_jitter": 0.11,
@@ -293,6 +302,10 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "notehead_angle_deg": -40.0,
         "hollow_open_prob": 0.48,
         "rest_archetype_weights": _weights(0.14, 0.12, 0.08, 0.56, 0.06, 0.04),
+        "stem_archetype": "overshoot_notehead",
+        "clef_archetype": "beethoven_wild_slash",
+        "beam_archetype": "scribble_double_pass",
+        "ink_dip_period": 20,
         "clef_ornate": 0.35,
         "barline_overshoot_sp": 0.68,
         "spacing_jitter": 0.42,
@@ -324,12 +337,15 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "grain_strength": 0.09,
         "ink_var": 0.15,
         "ink_pooling": 0.18,
-        "slant_deg": 16.5,
+        "slant_deg": 17.5,
         "notehead_archetype": "teardrop",
         "notehead_scale": 0.96,
         "notehead_angle_deg": -28.0,
         "hollow_open_prob": 0.20,
-        "rest_archetype_weights": _weights(0.06, 0.14, 0.42, 0.06, 0.10, 0.22),
+        "rest_archetype_weights": _weights(0.03, 0.48, 0.12, 0.03, 0.06, 0.14, 0.0, 0.14, 0.0, 0.0),
+        "stem_length_scale": 0.82,
+        "stem_archetype": "tapered_quill",
+        "ink_dip_period": 24,
         "clef_ornate": 0.72,
         "barline_overshoot_sp": 0.24,
         "spacing_jitter": 0.17,
@@ -404,6 +420,9 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "notehead_angle_deg": -24.0,
         "hollow_open_prob": 0.15,
         "rest_archetype_weights": _weights(0.05, 0.10, 0.25, 0.04, 0.08, 0.48),
+        "stem_archetype": "tall_spindly",
+        "stem_length_scale": 1.34,
+        "beam_grouping_mode": "french_broken_secondary",
         "clef_ornate": 0.85,
         "barline_overshoot_sp": 0.16,
         "spacing_jitter": 0.15,
@@ -441,6 +460,7 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "notehead_angle_deg": -22.0,
         "hollow_open_prob": 0.35,
         "rest_archetype_weights": _weights(0.18, 0.14, 0.32, 0.16, 0.05, 0.15),
+        "beam_grouping_mode": "french_broken_secondary",
         "clef_ornate": 0.48,
         "barline_overshoot_sp": 0.30,
         "spacing_jitter": 0.26,
@@ -477,7 +497,10 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "notehead_scale": 1.15,
         "notehead_angle_deg": -36.0,
         "hollow_open_prob": 0.10,
-        "rest_archetype_weights": _weights(0.02, 0.10, 0.06, 0.04, 0.44, 0.08, 0.01, 0.23, 0.01, 0.01),
+        "rest_archetype_weights": _weights(0.02, 0.36, 0.05, 0.03, 0.18, 0.06, 0.01, 0.27, 0.01, 0.01),
+        "ink_dip_period": 24,
+        "rastrum_wobble": 2.1,
+        "keysig_archetype": "baroque_vertical_flat",
         "clef_ornate": 0.88,
         "barline_overshoot_sp": 0.35,
         "spacing_jitter": 0.16,
@@ -537,7 +560,7 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "era": "modern",
         "ink_rgb": (0.07, 0.07, 0.08),
         "staff_ink_rgb": (0.22, 0.22, 0.24),
-        "nib_angle_deg": 50.0,
+        "nib_angle_deg": 43.0,
         "nib_min_ratio": 0.42,
         "stroke_scale": 1.24,
         "wobble_px": 0.85,
@@ -552,6 +575,9 @@ SCRIBE_STYLES: dict[str, dict[str, Any]] = {
         "notehead_angle_deg": -38.0,
         "hollow_open_prob": 0.22,
         "rest_archetype_weights": _weights(0.45, 0.12, 0.08, 0.30, 0.02, 0.03),
+        "beam_slope_style": "horizontal_flat",
+        "beam_thickness_scale": 1.32,
+        "barline_archetype": "heavy_thick_marker",
         "clef_ornate": 0.15,
         "barline_overshoot_sp": 0.22,
         "spacing_jitter": 0.20,
@@ -985,7 +1011,7 @@ _BUILTIN_STYLES: dict[str, dict[str, Any]] = copy.deepcopy(SCRIBE_STYLES)
 # Numeric parameter bounds used for validation and safe random scribe sampling.
 _NUMERIC_CLAMP_BOUNDS: dict[str, tuple[float, float]] = {
     "nib_angle_deg": (-65.0, 65.0),
-    "nib_min_ratio": (0.15, 0.95),
+    "nib_min_ratio": (0.15, 1.00),
     "stroke_scale": (0.45, 2.20),
     "wobble_px": (0.0, 4.0),
     "tremor_px": (0.0, 3.5),
@@ -1001,7 +1027,7 @@ _NUMERIC_CLAMP_BOUNDS: dict[str, tuple[float, float]] = {
     "barline_overshoot_sp": (0.0, 1.0),
     "spacing_jitter": (0.08, 0.45),
     "bar_width_var": (0.10, 0.35),
-    "end_bar_cram": (0.0, 0.40),
+    "end_bar_cram": (0.0, 0.70),
     "staff_curve_px": (0.0, 16.0),
     "staff_slope_deg": (-2.5, 2.5),
     "sp_jitter_frac": (0.0, 0.10),
@@ -1016,6 +1042,7 @@ _NUMERIC_CLAMP_BOUNDS: dict[str, tuple[float, float]] = {
     "split_nib_prob": (0.0, 1.0),
     "rastrum_wobble": (0.0, 6.0),
     "stain_prob": (0.0, 1.0),
+    "ink_dip_period": (0.0, 100.0),
     "notehead_aspect": (0.25, 2.20),
     "notehead_fill_density": (0.25, 1.50),
     "stem_length_scale": (0.65, 1.55),
@@ -1028,6 +1055,7 @@ _OPTIONAL_NUMERIC_DEFAULTS: dict[str, float] = {
     "split_nib_prob": 0.0,
     "rastrum_wobble": 0.0,
     "stain_prob": 0.0,
+    "ink_dip_period": 0.0,
     "notehead_aspect": 1.0,
     "notehead_fill_density": 1.0,
     "stem_length_scale": 1.0,
@@ -1197,6 +1225,9 @@ def _validate_and_normalize_style(name: str, spec: dict[str, Any]) -> dict[str, 
         ("clef_archetype", CLEF_ARCHETYPES),
         ("keysig_archetype", KEYSIG_ARCHETYPES),
         ("barline_archetype", BARLINE_ARCHETYPES),
+        ("pause_archetype", NEW_QUARTER_REST_ARCHETYPES),
+        ("flagged_rest_archetype", FLAGGED_REST_ARCHETYPES),
+        ("bar_rest_archetype", BAR_REST_ARCHETYPES),
     ):
         if arch_key in out and out[arch_key] is not None:
             if out[arch_key] not in valid_choices:
@@ -1483,6 +1514,17 @@ def interpolate_styles(
             if disc_key in sa or disc_key in sb:
                 out[disc_key] = vb if _pick_b() else va
 
+    # Optional 30-pause discrete archetypes
+    for pause_key in ("pause_archetype", "flagged_rest_archetype", "bar_rest_archetype"):
+        va = sa.get(pause_key)
+        vb = sb.get(pause_key)
+        if va is not None or vb is not None:
+            chosen_pause = vb if _pick_b() else va
+            if chosen_pause is not None:
+                out[pause_key] = chosen_pause
+            else:
+                out.pop(pause_key, None)
+
     # Interpolate RGB tuples
     for rgb_key in _RGB_KEYS:
         ra = np.asarray(sa[rgb_key], dtype=np.float64)
@@ -1576,19 +1618,27 @@ def sample_random_scribe(
         scribe["stain_prob"] = float(np.clip(rng.uniform(0.0, 0.30) if rng.random() < 0.35 else 0.0, 0.0, 1.0))
 
     # Sample morphological notehead parameters & explore all 18 archetypes.
+    # MUSCIMA++ biometrics: 76% core / 14% slim / 10% wide notehead_aspect.
     if base_style is None and j > 0.0 and rng.random() < 0.45:
         scribe["notehead_archetype"] = str(NOTEHEAD_ARCHETYPES[int(rng.integers(0, len(NOTEHEAD_ARCHETYPES)))])
     if "notehead_aspect" not in scribe:
         u = float(rng.random())
-        if u < 0.28:
-            aspect = float(rng.uniform(0.28, 0.55))
-        elif u < 0.80:
-            aspect = float(rng.uniform(0.60, 1.30))
+        if u < 0.14:
+            aspect = float(rng.uniform(0.28, 0.65))
+        elif u < 0.90:
+            aspect = float(rng.uniform(0.72, 1.25))
         else:
-            aspect = float(rng.uniform(1.35, 2.05))
+            aspect = float(rng.uniform(1.30, 2.05))
         scribe["notehead_aspect"] = float(np.clip(aspect, 0.25, 2.20))
     if "notehead_fill_density" not in scribe:
         scribe["notehead_fill_density"] = float(np.clip(rng.uniform(0.30, 1.45), 0.25, 1.50))
+
+    # MUSCIMA++ biometrics: 88% right-handed / 12% left-handed slant mixture for unconstrained scribes.
+    if base_style is None and j > 0.0:
+        if float(rng.random()) < 0.88:
+            scribe["slant_deg"] = float(np.clip(rng.normal(6.5, 4.2), 0.0, 18.0))
+        else:
+            scribe["slant_deg"] = float(np.clip(rng.normal(-8.0, 3.2), -14.0, -1.0))
 
     # Sample morphological stem, flag, beam, and ledger archetypes across all 52 + 5 variants.
     if base_style is None or (j > 0.0 and rng.random() < 0.55):
@@ -1629,9 +1679,18 @@ def sample_random_scribe(
         scribe["barline_archetype"] = default_barline
 
     if "stem_length_scale" not in scribe:
-        scribe["stem_length_scale"] = float(np.clip(rng.uniform(0.72, 1.48), 0.65, 1.55))
+        # MUSCIMA++ empirical stem length distribution centered at 0.88.
+        scribe["stem_length_scale"] = float(np.clip(rng.normal(0.88, 0.14), 0.65, 1.55))
     if "beam_thickness_scale" not in scribe:
         scribe["beam_thickness_scale"] = float(np.clip(rng.uniform(0.55, 1.95), 0.45, 2.10))
+
+    # Sample the 30 pause/rest archetypes (18 quarter + 6 flagged + 6 bar/fermata).
+    if base_style is None or (j > 0.0 and rng.random() < 0.55):
+        scribe["pause_archetype"] = str(NEW_QUARTER_REST_ARCHETYPES[int(rng.integers(0, len(NEW_QUARTER_REST_ARCHETYPES)))])
+    if base_style is None or (j > 0.0 and rng.random() < 0.55):
+        scribe["flagged_rest_archetype"] = str(FLAGGED_REST_ARCHETYPES[int(rng.integers(0, len(FLAGGED_REST_ARCHETYPES)))])
+    if base_style is None or (j > 0.0 and rng.random() < 0.55):
+        scribe["bar_rest_archetype"] = str(BAR_REST_ARCHETYPES[int(rng.integers(0, len(BAR_REST_ARCHETYPES)))])
 
     # Sample beam leveling (slope/elevation) & beam-to-flag grouping across all 10x8 combinations.
     if base_style is None or (j > 0.0 and rng.random() < 0.65):

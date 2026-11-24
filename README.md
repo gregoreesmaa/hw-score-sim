@@ -1,6 +1,6 @@
 # `hw-score-sim`
 
-**Turn any MusicXML or MuseScore file into authentic, pixel-accurate handwritten sheet music â€” 159 historical & modern scribe styles, 134 discrete glyph archetypes, infinite interpolated hands, zero MuseScore/LilyPond binaries, 100% MIT-licensed.**
+**Turn any MusicXML or MuseScore file into authentic, pixel-accurate handwritten sheet music â€” 159 historical & modern scribe styles, 164 discrete glyph archetypes + 18 beam leveling/grouping modes, infinite interpolated hands, zero MuseScore/LilyPond binaries, 100% MIT-licensed.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-brightgreen.svg)](pyproject.toml)
@@ -106,7 +106,7 @@ for idx in range(5):
 |---|---|---|---|
 | **License** | **100% MIT** (code + procedural styles) | Engine MIT, **scanned glyph assets `CC-BY-NC`** | **GPL** binaries |
 | **Commercial / Open-Weights ML Training** | Unrestricted | Blocked by `CC-BY-NC` assets | Requires isolating GPL pipeline; engraved look only |
-| **Visual Authenticity** | Procedural nib physics, 159 styles, 134 glyph archetypes, 6 paper stocks | Real scanned handwritten cutouts (e.g., MUSCIMA++ / Mashcima) | Publication-grade typeset engraving (uniform fonts) |
+| **Visual Authenticity** | Procedural nib physics, 159 styles, 164 glyph archetypes + 18 beam modes, 6 paper stocks | Real scanned handwritten cutouts (e.g., MUSCIMA++ / Mashcima) | Publication-grade typeset engraving (uniform fonts) |
 | **Style Diversity** | 159 named styles + **infinite continuous interpolation** | Bound to scanned writer pools | Fixed engraving fonts |
 | **Runtime Dependencies** | Pure Python (`numpy`, `pillow`) â€” **zero external binaries** | Python + external asset downloads | Headless Qt/GUI or LilyPond binary installs |
 | **Ground Truth** | Exact Bezier staves, glyph bboxes, COCO, YOLO, MusicXML | Pixel masks & MuNG graphs | External alignment or SVG scraping required |
@@ -135,7 +135,7 @@ Every style is a rich paleographic profile specifying 35+ physical parameters â€
 | `wild_extreme_degraded_everyday.json` | 22 | 0.25 mm mechanical pencil, dry Bic ballpoint, lefty blue gel smear, arthritis tremor, extreme degradations |
 | **Total Registered Styles** | **159** | **Plus infinite continuous interpolation via `interpolate_styles()` & `ScribeSampler`** |
 
-### 134 Discrete Glyph Archetypes + 5 Ledger Styles + 6 Paper Stocks
+### 164 Discrete Glyph Archetypes + 18 Beam Leveling/Grouping Modes + 5 Ledger Styles + 6 Paper Stocks
 
 | Category | Count | Archetypes |
 |---|---|---|
@@ -143,10 +143,11 @@ Every style is a rich paleographic profile specifying 35+ physical parameters â€
 | **Stems** | **18** | `straight_classic`, `hairline_needle`, `heavy_thick`, `tapered_quill`, `bowed_right`, `bowed_left`, `s_curve_flex`, `short_stubby`, `tall_spindly`, `steep_forward_slant`, `back_slant_lefty`, `detached_gap`, `center_piercing`, `overshoot_notehead`, `tremor_shaky`, `double_stroke_sketch`, `flared_base`, `whip_taper` |
 | **Flags** | **20** | `classic_droop`, `baroque_curl`, `sharp_angular_7`, `hurried_slash`, `tiny_flick`, `long_dramatic_s`, `closed_loop_flourish`, `broad_nib_pennant`, `detached_tick`, `wide_horizontal_wing`, `steep_vertical_drop`, `zigzag_frantic`, `hooked_j_tail`, `calligraphic_ribbon`, `stubby_wedge`, `double_back_loop`, `feathered_sweep`, `flat_bar_flag`, `reverse_kick`, `minimal_dot_tail` |
 | **Beams** | **14** | `straight_classic`, `thick_marker`, `hairline_thin`, `arched_convex`, `sagged_concave`, `tapered_wedge`, `overhanging_ends`, `short_clipped`, `scribble_double_pass`, `calligraphic_ribbon`, `stepped_wobbly`, `gapped_broken`, `wide_spaced_bars`, `tight_crammed_bars` |
+| **Beam Leveling & Grouping** | **18** | **10 slope styles** (`horizontal_flat`, `engraver_gentle`, `steep_contour`, `exaggerated_swoop`, `reverse_quirk`, `concave_valley`, `convex_arch`, `stepped_secondary_tilt`, `high_floating_beam`, `tight_hug_beam`) + **8 grouping modes** (`standard_beat`, `all_flags_vocal`, `mixed_split_flags`, `long_phrase_beam`, `pair_beams_2`, `uneven_3_plus_1`, `feathered_splay`, `french_broken_secondary`) |
 | **Clefs** | **18** | `classic_engraved`, `baroque_ornate_scroll`, `hurried_single_loop`, `tall_spindly_g`, `stubby_compact`, `minimal_s_slash`, `figure_8_treble`, `beethoven_wild_slash`, `chopin_delicate_spiral`, `jazz_realbook_bold`, `sharp_angular_modern`, `detached_dot_bass`, `open_c_hook_bass`, `double_bar_c_clef`, `bracket_c_clef`, `calligraphic_broad_nib`, `tremor_shaky_clef`, `backslant_lefty_clef` |
 | **Key Sigs & Accidentals** | **18** | `classic_neat`, `tall_narrow_sharp`, `wide_slanted_hash`, `hurried_x_sharp`, `open_loop_flat`, `pointed_teardrop_flat`, `tiny_pinprick_acc`, `oversized_bold_acc`, `crammed_tight_cluster`, `wide_spread_keysig`, `ascending_drift_keysig`, `descending_drift_keysig`, `double_stroke_sketch`, `calligraphic_nib_acc`, `baroque_vertical_flat`, `jazz_heavy_marker_acc`, `hairline_needle_acc`, `jagged_zigzag_acc` |
 | **Barlines** | **18** | `crisp_vertical`, `tall_overshoot`, `short_clipped_inside`, `steep_forward_slant`, `back_slant_lefty`, `bowed_curved_bar`, `s_wobble_freehand`, `heavy_thick_marker`, `hairline_faint`, `tapered_quill_bar`, `double_pass_sketch`, `gapped_broken_bar`, `hooked_top_bottom_serif`, `wide_double_gap`, `tight_double_gap`, `oversized_repeat_blobs`, `tiny_pinprick_repeat_dots`, `slashed_repeat_ticks` |
-| **Rests** | **10** | `lightning_z`, `backwards_7_hook`, `cursive_3`, `hurried_slash_zig`, `baroque_c_hook`, `calligraphic_s_curl`, `sharp_v_tick`, `baroque_flag_loop`, `modern_tall_z`, `scribble_s` |
+| **Rests / Pauses** | **40** | **10 legacy quarter rests** (`lightning_z`, `backwards_7_hook`, `cursive_3`, `hurried_slash_zig`, `baroque_c_hook`, `calligraphic_s_curl`, `sharp_v_tick`, `baroque_flag_loop`, `modern_tall_z`, `scribble_s`) + **18 new quarter rests** (`baroque_reversed_r`, `beethoven_violent_zig`, `chopin_gossamer_3`, `schubert_vertical_drop`, `brahms_bold_chevron`, `liszt_sweeping_s_hook`, `debussy_floating_tilde`, `stravinsky_geometric_z`, `shostakovich_looped_2`, `realbook_chisel_bolt`, `bebop_napkin_tick`, `studio_copyist_clean_3`, `student_awkward_e`, `arthritis_tremor_zig`, `lefty_backslant_hook`, `hairline_needle_s`, `open_double_loop_r`, `pinprick_minimal_v`) + **6 flagged rests** + **6 bar/fermata rests** |
 | **Ledger Lines** | **5** | `crisp`, `wide_sweep`, `slanted`, `short_tick`, `wavy` |
 | **Paper Stocks** | **6** | `aged_rag`, `bright_white`, `cream_manuscript`, `spiral_notebook`, `ozalid_blue`, `soviet_green_tint` |
 

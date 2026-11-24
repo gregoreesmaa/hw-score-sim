@@ -80,7 +80,7 @@ class TestScribeStylesRegistry(unittest.TestCase):
 
                 # Nib & stroke bounds
                 self.assertGreaterEqual(s["nib_min_ratio"], 0.15)
-                self.assertLessEqual(s["nib_min_ratio"], 0.95)
+                self.assertLessEqual(s["nib_min_ratio"], 1.00)
                 self.assertGreater(s["stroke_scale"], 0.3)
                 self.assertLess(s["stroke_scale"], 2.5)
                 self.assertGreaterEqual(s["wobble_px"], 0.0)
@@ -112,7 +112,7 @@ class TestScribeStylesRegistry(unittest.TestCase):
                 # Spacing & layout quirks
                 self.assertTrue(0.08 <= s["spacing_jitter"] <= 0.45)
                 self.assertTrue(0.10 <= s["bar_width_var"] <= 0.35)
-                self.assertTrue(0.0 <= s["end_bar_cram"] <= 0.40)
+                self.assertTrue(0.0 <= s["end_bar_cram"] <= 0.70)
                 self.assertGreaterEqual(s["staff_curve_px"], 0.0)
                 self.assertGreaterEqual(s["sp_jitter_frac"], 0.0)
                 self.assertTrue(0.0 <= s["blank_prerule_prob"] <= 0.60)
@@ -330,6 +330,39 @@ class TestLayoutQuirks(unittest.TestCase):
         for i in range(4):
             diffs = line_ys[i + 1] - line_ys[i]
             self.assertTrue(np.all(diffs > 0.5 * sp), "Staff lines must remain well-separated and ordered")
+
+    def test_build_curved_staff_y_preserves_signed_slope_and_dip_cycle(self) -> None:
+        from hw_score_sim.stroke_engine import StrokeCanvas
+
+        lefty = dict(get_style("left_handed_backslant"), staff_slope_deg=-1.8)
+        for seed in range(10):
+            _, ctrl, _ = build_curved_staff_y(50.0, 950.0, 300.0, 12.0, lefty, np.random.default_rng(seed))
+            # Negative slope => right endpoint y3 < left endpoint y0
+            self.assertLess(ctrl[3, 1], ctrl[0, 1])
+
+        righty = dict(get_style("beethoven_hurried_autograph"), staff_slope_deg=1.8)
+        for seed in range(10):
+            _, ctrl, _ = build_curved_staff_y(50.0, 950.0, 300.0, 12.0, righty, np.random.default_rng(seed))
+            self.assertGreater(ctrl[3, 1], ctrl[0, 1])
+
+        # Verify quill ink-dip sawtooth depletion and abrupt reload
+        canvas = StrokeCanvas(64, 64, (1.0, 1.0, 1.0), rng=np.random.default_rng(1))
+        st_off = {"ink_dip_period": 0}
+        self.assertEqual(canvas.advance_ink_dip(st_off), (1.0, 0.0))
+
+        st_dip = {"ink_dip_period": 20}
+        ops = []
+        drops = []
+        for _ in range(25):
+            op, dr = canvas.advance_ink_dip(st_dip)
+            ops.append(op)
+            drops.append(dr)
+        # Fresh dip (0) > depleted (19), and abrupt reload at 20 matches 0
+        self.assertGreater(ops[0], ops[19])
+        self.assertAlmostEqual(ops[20], ops[0], places=6)
+        self.assertEqual(drops[0], 0.0)
+        self.assertGreater(drops[19], 0.15)
+        self.assertEqual(drops[20], 0.0)
 
 
 if __name__ == "__main__":

@@ -472,11 +472,16 @@ def build_curved_staff_y(
 
     span_x = float(x1 - x0)
     curve_px = abs(float(style.get("staff_curve_px", 3.5)))
-    slope_max_deg = abs(float(style.get("staff_slope_deg", 0.6)))
+    slope_cfg = float(style.get("staff_slope_deg", 0.6))
     sp_jitter_frac = float(np.clip(style.get("sp_jitter_frac", 0.025), 0.0, 0.15))
 
-    # Global slight staff slope
-    slope_deg = float(rng.uniform(-slope_max_deg, slope_max_deg)) if slope_max_deg > 0.0 else 0.0
+    # Global slight staff slope preserving configured sign (e.g. left-handed downward slope)
+    if slope_cfg != 0.0:
+        mean_slope = slope_cfg * 0.65
+        spread = abs(slope_cfg) * 0.35
+        slope_deg = float(np.clip(rng.uniform(mean_slope - spread, mean_slope + spread), -2.5, 2.5))
+    else:
+        slope_deg = 0.0
     dy_slope = span_x * float(np.tan(np.deg2rad(slope_deg)))
 
     y0 = float(y_center - 0.5 * dy_slope)

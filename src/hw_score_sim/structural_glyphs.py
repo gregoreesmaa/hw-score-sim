@@ -271,18 +271,20 @@ def resolve_structural_archetypes(style: dict) -> Tuple[str, str, str]:
     # 1. Clef archetype
     clef = st.get("clef_archetype")
     if clef not in CLEF_ARCHETYPES:
-        if "beethoven" in name or "wild" in name or "frantic" in name:
-            clef = "beethoven_wild_slash"
+        if "baroque" in name or "bach" in name or "baroque" in era:
+            clef = "baroque_ornate_scroll"
         elif "chopin" in name or "delicate" in name or "salon" in name:
             clef = "chopin_delicate_spiral"
-        elif "jazz" in name or "realbook" in name or "marker" in name:
-            clef = "jazz_realbook_bold"
-        elif "baroque" in name or "bach" in name or "baroque" in era or ornate >= 0.85:
+        elif ornate >= 0.85:
             clef = "baroque_ornate_scroll"
-        elif "lefty" in name or slant <= -10.0:
-            clef = "backslant_lefty_clef"
         elif "tremor" in name or "shaky" in name or tremor >= 0.9:
             clef = "tremor_shaky_clef"
+        elif "realbook" in name or "jazz" in name or "marker" in name:
+            clef = "jazz_realbook_bold"
+        elif "lefty" in name or slant <= -10.0:
+            clef = "backslant_lefty_clef"
+        elif "beethoven" in name or "wild" in name or "frantic" in name:
+            clef = "beethoven_wild_slash"
         elif "calligraph" in name or "quill" in name:
             clef = "calligraphic_broad_nib"
         elif "modern" in name or "angular" in name:
@@ -297,16 +299,18 @@ def resolve_structural_archetypes(style: dict) -> Tuple[str, str, str]:
     # 2. Key-signature / accidental archetype
     keysig = st.get("keysig_archetype")
     if keysig not in KEYSIG_ARCHETYPES:
-        if "jazz" in name or "marker" in name or stroke_scale >= 1.45:
-            keysig = "jazz_heavy_marker_acc"
-        elif "baroque" in name or "bach" in name or "baroque" in era:
+        if "baroque" in name or "bach" in name or "baroque" in era:
             keysig = "baroque_vertical_flat"
+        elif "realbook" in name or "jazz" in name or "marker" in name:
+            keysig = "jazz_heavy_marker_acc"
         elif "calligraph" in name or "quill" in name:
             keysig = "calligraphic_nib_acc"
         elif "chopin" in name or "hairline" in name or stroke_scale <= 0.65:
             keysig = "hairline_needle_acc"
         elif "beethoven" in name or "sketch" in name or "hurried" in name:
             keysig = "hurried_x_sharp"
+        elif stroke_scale >= 1.45:
+            keysig = "jazz_heavy_marker_acc"
         elif "cram" in name or float(st.get("end_bar_cram", 0.0)) >= 0.5:
             keysig = "crammed_tight_cluster"
         elif name:
@@ -319,18 +323,22 @@ def resolve_structural_archetypes(style: dict) -> Tuple[str, str, str]:
     if barline not in BARLINE_ARCHETYPES:
         if "lefty" in name or slant <= -10.0:
             barline = "back_slant_lefty"
+        elif "baroque" in name or "bach" in name or "baroque" in era:
+            barline = "tapered_quill_bar"
+        elif "realbook" in name or "jazz" in name or "marker" in name:
+            barline = "heavy_thick_marker"
+        elif "tremor" in name or "shaky" in name or tremor >= 0.9:
+            barline = "s_wobble_freehand"
         elif slant >= 11.0 or "beethoven" in name:
             barline = "steep_forward_slant"
-        elif "jazz" in name or "marker" in name or stroke_scale >= 1.45:
+        elif stroke_scale >= 1.45:
             barline = "heavy_thick_marker"
         elif "hairline" in name or "faint" in name or stroke_scale <= 0.65:
             barline = "hairline_faint"
-        elif "baroque" in name or "quill" in name or "baroque" in era:
+        elif "quill" in name:
             barline = "tapered_quill_bar"
         elif overshoot >= 0.45:
             barline = "tall_overshoot"
-        elif tremor >= 0.9:
-            barline = "s_wobble_freehand"
         elif name:
             barline = BARLINE_ARCHETYPES[_stable_index(f"barline:{name}:{era}", len(BARLINE_ARCHETYPES))]
         else:

@@ -13,6 +13,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from .rest_variants import (
+    BAR_REST_ARCHETYPES,
+    FLAGGED_REST_ARCHETYPES,
+    NEW_QUARTER_REST_ARCHETYPES,
+    draw_pause_variant,
+)
 from .stroke_engine import (
     RGBLike,
     StrokeCanvas,
@@ -451,6 +457,10 @@ def draw_rest(
     rt = alias_map.get(rt, rt)
 
     if rt in ("whole", "half"):
+        bar_arch = style.get("bar_rest_archetype")
+        if bar_arch in BAR_REST_ARCHETYPES:
+            draw_pause_variant(canvas, rt, cx, cy, sp, color_rgb, style, rng, archetype=str(bar_arch))
+            return
         # Slightly uneven hand-drawn ink block hanging below (whole) or sitting above (half) the line.
         w = sp * float(rng.uniform(0.92, 1.18))
         h = sp * float(rng.uniform(0.38, 0.52))
@@ -472,23 +482,35 @@ def draw_rest(
         draw_calligraphic_polyline(canvas, pts, color_rgb, h, local_style, kind="beam")
         return
 
+    if rt == "fermata":
+        bar_arch = style.get("bar_rest_archetype")
+        arch_arg = str(bar_arch) if bar_arch in BAR_REST_ARCHETYPES else None
+        draw_pause_variant(canvas, "fermata", cx, cy, sp, color_rgb, style, rng, archetype=arch_arg)
+        return
+
     if rt == "quarter":
         forced = style.get("force_rest_archetype")
+        if forced in NEW_QUARTER_REST_ARCHETYPES:
+            draw_pause_variant(canvas, "quarter", cx, cy, sp, color_rgb, style, rng, archetype=str(forced))
+            return
         if forced in QUARTER_REST_ARCHETYPES:
             arch = str(forced)
         else:
+            pause_arch = style.get("pause_archetype")
+            if pause_arch in NEW_QUARTER_REST_ARCHETYPES:
+                draw_pause_variant(canvas, "quarter", cx, cy, sp, color_rgb, style, rng, archetype=str(pause_arch))
+                return
             arch = _choose_weighted(QUARTER_REST_ARCHETYPES, style.get("rest_archetype_weights"), rng)
         _draw_quarter_rest_archetype(canvas, arch, cx, cy, sp, color_rgb, style, rng)
         return
 
-    if rt == "eighth":
-        _draw_flagged_rest(canvas, 1, cx, cy, sp, color_rgb, style, rng)
-        return
-    if rt == "16th":
-        _draw_flagged_rest(canvas, 2, cx, cy, sp, color_rgb, style, rng)
-        return
-    if rt == "32nd":
-        _draw_flagged_rest(canvas, 3, cx, cy, sp, color_rgb, style, rng)
+    if rt in ("eighth", "16th", "32nd"):
+        flagged_arch = style.get("flagged_rest_archetype")
+        if flagged_arch in FLAGGED_REST_ARCHETYPES:
+            draw_pause_variant(canvas, rt, cx, cy, sp, color_rgb, style, rng, archetype=str(flagged_arch))
+            return
+        n_hooks = {"eighth": 1, "16th": 2, "32nd": 3}[rt]
+        _draw_flagged_rest(canvas, n_hooks, cx, cy, sp, color_rgb, style, rng)
         return
 
     # Fallback: draw quarter rest if unknown string.
