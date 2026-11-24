@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hw-score-sim"
+version = "0.1.0"
+description = "Procedural handwritten sheet-music rendering engine for MusicXML and MuseScore scores"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "hw-score-sim contributors" },
+]
+keywords = [
+    "music",
+    "sheet-music",
+    "handwriting",
+    "omr",
+    "musicxml",
+    "musescore",
+    "synthetic-data",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/gregoreesmaa/hw-score-sim"
+Repository = "https://github.com/gregoreesmaa/hw-score-sim"
+Issues = "https://github.com/gregoreesmaa/hw-score-sim/issues"
+
+[project.scripts]
+hw-score-sim = "hw_score_sim.cli:main"
+hw-score-gallery = "hw_score_sim.cli:gallery_main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hw_score_sim = ["style_packs/*.json"]
