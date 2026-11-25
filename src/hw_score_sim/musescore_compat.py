@@ -1774,6 +1774,7 @@ def export_score_to_musicxml(
     score: ParsedScore,
     out_path: Union[str, Path],
     measure_range: Optional[Tuple[int, int]] = None,
+    max_parts: Optional[int] = None,
 ) -> Path:
     """Export a `ParsedScore` (or 0-based `[start, end)` measure slice) to MusicXML 3.1 Partwise."""
     divisions = 480  # MuseScore native division: cleanly divides 2,3,4,5,6,8,12,16,32
@@ -1781,8 +1782,10 @@ def export_score_to_musicxml(
     work = ET.SubElement(root, "work")
     ET.SubElement(work, "work-title").text = score.title
 
+    parts_to_export = score.parts[:max_parts] if max_parts is not None else score.parts
+
     part_list = ET.SubElement(root, "part-list")
-    for p_idx, part in enumerate(score.parts):
+    for p_idx, part in enumerate(parts_to_export):
         sp = ET.SubElement(part_list, "score-part", id=f"P{p_idx + 1}")
         ET.SubElement(sp, "part-name").text = part.name
 
@@ -1794,16 +1797,42 @@ def export_score_to_musicxml(
         "double_flat": "flat-flat",
     }
 
-    for p_idx, part in enumerate(score.parts):
-        p_el = ET.SubElement(root, "part", id=f"P{p_idx + 1}")
-        meas_slice = (
-            part.measures[measure_range[0] : measure_range[1]]
-            if measure_range is not None
-            else part.measures
-        )
+    bar_style_map = {
+        "double": "light-light",
+        "final": "light-heavy",
+    }
+
+    for p_idx, part in enumerate(parts_to_export):
+        part_el = ET.SubElement(root, "part", id=f"P{p_idx + 1}")
+        if measure_range is not None:
+            m_start, m_end = int(measure_range[0]), int(measure_range[1])
+            n_target = max(0, m_end - m_start)
+            meas_slice: List[MeasureData] = []
+            last_clef = part.measures[m_start - 1].clef if (0 < m_start <= len(part.measures)) else (part.measures[0].clef if part.measures else "G-2")
+            last_key = part.measures[m_start - 1].key_fifths if (0 < m_start <= len(part.measures)) else (part.measures[0].key_fifths if part.measures else 0)
+            last_ts = part.measures[m_start - 1].time_sig if (0 < m_start <= len(part.measures)) else (part.measures[0].time_sig if part.measures else (4, 4))
+            for rel_i in range(n_target):
+                abs_i = m_start + rel_i
+                if 0 <= abs_i < len(part.measures):
+                    md = part.measures[abs_i]
+                    last_clef, last_key, last_ts = md.clef, md.key_fifths, md.time_sig
+                    meas_slice.append(md)
+                else:
+                    meas_slice.append(
+                        MeasureData(
+                            number=abs_i + 1,
+                            clef=last_clef,
+                            key_fifths=last_key,
+                            time_sig=last_ts,
+                            events=[RestEvent(duration_kind="whole", is_measure_rest=True, voice=1)],
+                        )
+                    )
+        else:
+            meas_slice = list(part.measures)
+
         for m_idx, meas in enumerate(meas_slice):
             m_num_out = (m_idx + 1) if measure_range is not None else meas.number
-            m_el = ET.SubElement(p_el, "measure", number=str(m_num_out))
+            m_el = ET.SubElement(part_el, "measure", number=str(m_num_out))
             if m_idx == 0 or meas.clef_change or meas.key_change or meas.time_change:
                 attr = ET.SubElement(m_el, "attributes")
                 if m_idx == 0:
@@ -1825,92 +1854,106 @@ def export_score_to_musicxml(
                     if shift != 0:
                         ET.SubElement(c_el, "clef-octave-change").text = str(shift)
 
-            # Group events by voice and track exact divisions cursor for clean <backup>/<forward>
-            voices = sorted({getattr(e, "voice", 1) for e in meas.events}) or [1]
-            prev_cursor_div = 0
-            for v_pos, v in enumerate(voices):
-                v_evs = [e for e in meas.events if getattr(e, "voice", 1) == v]
-                if v_pos > 0 and prev_cursor_div > 0:
-                    bk = ET.SubElement(m_el, "backup")
-                    ET.SubElement(bk, "duration").text = str(prev_cursor_div)
-                cursor_div = 0
-                for ev in v_evs:
-                    if isinstance(ev, RestEvent):
-                        target_div = int(round(ev.beat_offset * divisions))
-                        if target_div > cursor_div:
-                            fw = ET.SubElement(m_el, "forward")
-                            ET.SubElement(fw, "duration").text = str(target_div - cursor_div)
-                            cursor_div = target_div
-                        n_el = ET.SubElement(m_el, "note")
-                        r_el = ET.SubElement(n_el, "rest")
-                        if ev.is_measure_rest:
-                            r_el.set("measure", "yes")
-                        dur_div = max(
-                            1,
-                            int(
-                                round(
-                                    (
-                                        meas.time_sig[0] * (4.0 / meas.time_sig[1])
-                                        if ev.is_measure_rest
-                                        else ev.beats
-                                    )
-                                    * divisions
-                                )
-                            ),
-                        )
-                        ET.SubElement(n_el, "duration").text = str(dur_div)
-                        ET.SubElement(n_el, "voice").text = str(v)
-                        if not ev.is_measure_rest:
-                            ET.SubElement(n_el, "type").text = ev.duration_kind
-                            for _ in range(ev.dots):
-                                ET.SubElement(n_el, "dot")
-                            if ev.tuplet_actual and ev.tuplet_normal:
-                                tm = ET.SubElement(n_el, "time-modification")
-                                ET.SubElement(tm, "actual-notes").text = str(ev.tuplet_actual)
-                                ET.SubElement(tm, "normal-notes").text = str(ev.tuplet_normal)
-                        cursor_div += dur_div
-                    elif isinstance(ev, NoteEvent):
-                        if not ev.is_grace:
+            # Empty measures must still carry a full-measure rest so downstream converters
+            # preserve every barline 1:1 with the rendered system.
+            full_meas_div = max(1, int(round(meas.time_sig[0] * (4.0 / max(1, meas.time_sig[1])) * divisions)))
+            if not meas.events:
+                n_el = ET.SubElement(m_el, "note")
+                r_el = ET.SubElement(n_el, "rest")
+                r_el.set("measure", "yes")
+                ET.SubElement(n_el, "duration").text = str(full_meas_div)
+                ET.SubElement(n_el, "voice").text = "1"
+            else:
+                # Group events by voice and track exact divisions cursor for clean <backup>/<forward>
+                voices = sorted({getattr(e, "voice", 1) for e in meas.events}) or [1]
+                prev_cursor_div = 0
+                for v_pos, v in enumerate(voices):
+                    v_evs = [e for e in meas.events if getattr(e, "voice", 1) == v]
+                    if v_pos > 0 and prev_cursor_div > 0:
+                        bk = ET.SubElement(m_el, "backup")
+                        ET.SubElement(bk, "duration").text = str(prev_cursor_div)
+                    cursor_div = 0
+                    for ev in v_evs:
+                        if isinstance(ev, RestEvent):
                             target_div = int(round(ev.beat_offset * divisions))
                             if target_div > cursor_div:
                                 fw = ET.SubElement(m_el, "forward")
                                 ET.SubElement(fw, "duration").text = str(target_div - cursor_div)
                                 cursor_div = target_div
-                        dur_div = max(1, int(round(ev.beats * divisions))) if not ev.is_grace else 0
-                        for h_i, step in enumerate(ev.staff_steps):
                             n_el = ET.SubElement(m_el, "note")
-                            if ev.is_grace:
-                                g_el = ET.SubElement(n_el, "grace")
-                                if ev.grace_slash:
-                                    g_el.set("slash", "yes")
-                            if h_i > 0:
-                                ET.SubElement(n_el, "chord")
-                            if h_i < len(ev.pitches_info):
-                                letter, octave, alter = ev.pitches_info[h_i]
-                            else:
-                                letter, octave = _staff_step_to_letter_octave(step, meas.clef)
-                                alter = 0
-                            p_el = ET.SubElement(n_el, "pitch")
-                            ET.SubElement(p_el, "step").text = letter
-                            if alter != 0:
-                                ET.SubElement(p_el, "alter").text = str(alter)
-                            ET.SubElement(p_el, "octave").text = str(octave)
-                            if not ev.is_grace:
-                                ET.SubElement(n_el, "duration").text = str(dur_div)
+                            r_el = ET.SubElement(n_el, "rest")
+                            if ev.is_measure_rest:
+                                r_el.set("measure", "yes")
+                            dur_div = max(
+                                1,
+                                int(
+                                    round(
+                                        (
+                                            meas.time_sig[0] * (4.0 / max(1, meas.time_sig[1]))
+                                            if ev.is_measure_rest
+                                            else ev.beats
+                                        )
+                                        * divisions
+                                    )
+                                ),
+                            )
+                            ET.SubElement(n_el, "duration").text = str(dur_div)
                             ET.SubElement(n_el, "voice").text = str(v)
-                            ET.SubElement(n_el, "type").text = ev.duration_kind
-                            for _ in range(ev.dots):
-                                ET.SubElement(n_el, "dot")
-                            acc = ev.accidentals[h_i] if h_i < len(ev.accidentals) else None
-                            if acc and acc in acc_to_mxml:
-                                ET.SubElement(n_el, "accidental").text = acc_to_mxml[acc]
-                            if ev.tuplet_actual and ev.tuplet_normal and not ev.is_grace:
-                                tm = ET.SubElement(n_el, "time-modification")
-                                ET.SubElement(tm, "actual-notes").text = str(ev.tuplet_actual)
-                                ET.SubElement(tm, "normal-notes").text = str(ev.tuplet_normal)
-                        if not ev.is_grace:
+                            if not ev.is_measure_rest:
+                                ET.SubElement(n_el, "type").text = ev.duration_kind
+                                for _ in range(ev.dots):
+                                    ET.SubElement(n_el, "dot")
+                                if ev.tuplet_actual and ev.tuplet_normal:
+                                    tm = ET.SubElement(n_el, "time-modification")
+                                    ET.SubElement(tm, "actual-notes").text = str(ev.tuplet_actual)
+                                    ET.SubElement(tm, "normal-notes").text = str(ev.tuplet_normal)
                             cursor_div += dur_div
-                prev_cursor_div = cursor_div
+                        elif isinstance(ev, NoteEvent):
+                            if not ev.is_grace:
+                                target_div = int(round(ev.beat_offset * divisions))
+                                if target_div > cursor_div:
+                                    fw = ET.SubElement(m_el, "forward")
+                                    ET.SubElement(fw, "duration").text = str(target_div - cursor_div)
+                                    cursor_div = target_div
+                            dur_div = max(1, int(round(ev.beats * divisions))) if not ev.is_grace else 0
+                            for h_i, step in enumerate(ev.staff_steps):
+                                n_el = ET.SubElement(m_el, "note")
+                                if ev.is_grace:
+                                    g_el = ET.SubElement(n_el, "grace")
+                                    if ev.grace_slash:
+                                        g_el.set("slash", "yes")
+                                if h_i > 0:
+                                    ET.SubElement(n_el, "chord")
+                                if h_i < len(ev.pitches_info):
+                                    letter, octave, alter = ev.pitches_info[h_i]
+                                else:
+                                    letter, octave = _staff_step_to_letter_octave(step, meas.clef)
+                                    alter = 0
+                                pitch_el = ET.SubElement(n_el, "pitch")
+                                ET.SubElement(pitch_el, "step").text = letter
+                                if alter != 0:
+                                    ET.SubElement(pitch_el, "alter").text = str(alter)
+                                ET.SubElement(pitch_el, "octave").text = str(octave)
+                                if not ev.is_grace:
+                                    ET.SubElement(n_el, "duration").text = str(dur_div)
+                                ET.SubElement(n_el, "voice").text = str(v)
+                                ET.SubElement(n_el, "type").text = ev.duration_kind
+                                for _ in range(ev.dots):
+                                    ET.SubElement(n_el, "dot")
+                                acc = ev.accidentals[h_i] if h_i < len(ev.accidentals) else None
+                                if acc and acc in acc_to_mxml:
+                                    ET.SubElement(n_el, "accidental").text = acc_to_mxml[acc]
+                                if ev.tuplet_actual and ev.tuplet_normal and not ev.is_grace:
+                                    tm = ET.SubElement(n_el, "time-modification")
+                                    ET.SubElement(tm, "actual-notes").text = str(ev.tuplet_actual)
+                                    ET.SubElement(tm, "normal-notes").text = str(ev.tuplet_normal)
+                            if not ev.is_grace:
+                                cursor_div += dur_div
+                    prev_cursor_div = cursor_div
+
+            if meas.barline in bar_style_map:
+                bl_el = ET.SubElement(m_el, "barline", location="right")
+                ET.SubElement(bl_el, "bar-style").text = bar_style_map[meas.barline]
 
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)

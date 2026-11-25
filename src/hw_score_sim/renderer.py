@@ -75,7 +75,7 @@ def layout_score_pages(
     page_h: int = 2200,
     style: Optional[Dict[str, Any]] = None,
     rng: Optional[random.Random] = None,
-    max_parts: int = 4,
+    max_parts: int = 6,
 ) -> List[SystemLayout]:
     """Wrap score measures into systems that fit on page 1."""
     style = style or {}
@@ -86,7 +86,9 @@ def layout_score_pages(
     total_measures = score.num_measures
 
     sp_base = float(style.get("sp", style.get("staff_space", 16.0)))
-    if n_staves >= 4:
+    if n_staves >= 5:
+        sp = min(sp_base, 10.5)
+    elif n_staves == 4:
         sp = min(sp_base, 12.0)
     elif n_staves == 3:
         sp = min(sp_base, 13.5)
@@ -136,6 +138,20 @@ def layout_score_pages(
     intra_gap = ((7.2 if has_lyrics else 6.5) * sp * intra_gap_mult) if n_staves > 1 else 0.0
     inter_system_gap = ((8.2 if has_lyrics else 7.5) * sp if n_staves == 1 else 6.2 * sp) * inter_gap_mult
     system_h = n_staves * staff_h + max(0, n_staves - 1) * intra_gap
+
+    # Ensure 5-6 staff systems still fit cleanly inside available vertical page height (e.g. landscape).
+    avail_h = max(120.0, float(page_h) - margin_top - margin_bottom)
+    if n_staves > 1 and system_h > avail_h * 0.94:
+        max_gap = max(3.6 * sp, (avail_h * 0.94 - n_staves * staff_h) / max(1, n_staves - 1))
+        intra_gap = min(intra_gap, max_gap)
+        system_h = n_staves * staff_h + (n_staves - 1) * intra_gap
+        if system_h > avail_h * 0.94:
+            shrink = (avail_h * 0.94) / max(1.0, system_h)
+            sp = max(7.0, sp * shrink)
+            staff_h = 4.0 * sp
+            intra_gap = max(3.6 * sp, intra_gap * shrink)
+            inter_system_gap = max(4.5 * sp, inter_system_gap * shrink)
+            system_h = n_staves * staff_h + (n_staves - 1) * intra_gap
 
     bars_per_sys_default = 4 if n_staves >= 2 else 5
     bar_width_var = float(style.get("bar_width_var", 0.12))
@@ -927,6 +943,7 @@ def _export_training_systems(
     systems: List[SystemLayout],
     export_dir: Path,
     stem: str,
+    max_parts: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Export cropped per-system PNGs and per-system MusicXML targets (plus optional bekern)."""
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -956,6 +973,7 @@ def _export_training_systems(
             score,
             export_dir / f"{sys_stem}.musicxml",
             measure_range=(sys_lay.measure_start, sys_lay.measure_end),
+            max_parts=max_parts,
         )
         meas_arg = f"1..{max(1, m2 - m1 + 1)}"
 
@@ -1168,6 +1186,7 @@ def render_score_handwritten(
     page_h: int = 2200,
     export_train_dir: Optional[Union[str, Path]] = None,
     clean_paper: bool = False,
+    max_parts: int = 6,
 ) -> Dict[str, Any]:
     """Render a MusicXML / MuseScore file in the given handwritten style.
 
@@ -1249,7 +1268,7 @@ def render_score_handwritten(
     ev_style_scratch = dict(style)
 
     # 3. Compute page systems & curved staff lines
-    systems = layout_score_pages(score, page_w=page_w, page_h=page_h, style=style, rng=rng)
+    systems = layout_score_pages(score, page_w=page_w, page_h=page_h, style=style, rng=rng, max_parts=max_parts)
     _draw_page_furniture(canvas, score, systems, style, np_rng)
     gt_systems: List[Dict[str, Any]] = []
 
@@ -2183,6 +2202,7 @@ def render_score_handwritten(
             systems=systems,
             export_dir=Path(export_train_dir),
             stem=out_path.stem,
+            max_parts=max_parts,
         )
         gt_payload["train_exports"] = train_exports
 
