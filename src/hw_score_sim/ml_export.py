@@ -278,6 +278,7 @@ def render_sample(
     page_h: int = 2200,
     include_musicxml: bool = True,
     clean_paper: bool = False,
+    historical_clean: bool = False,
 ) -> RenderSample:
     """Render a score in memory and return a `RenderSample` with schema-1.0 GT metadata.
 
@@ -323,6 +324,7 @@ def render_sample(
             page_h=int(page_h),
             export_train_dir=None,
             clean_paper=bool(clean_paper),
+            historical_clean=bool(historical_clean),
         )
 
         # Load PIL image cleanly into memory before temp directory cleanup

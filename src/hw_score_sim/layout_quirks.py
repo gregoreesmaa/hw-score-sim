@@ -82,48 +82,59 @@ def make_manuscript_paper(
     img[:, :, 1] = page_rgb[1]
     img[:, :, 2] = page_rgb[2]
 
-    # 1. Laid paper grain (fine fiber noise + subtle horizontal laid lines)
+    # 1. Laid paper grain (fine fiber noise + subtle horizontal laid lines + faint chain lines)
     if paper_grain > 0.0:
         fine_noise = rng.standard_normal((height, width), dtype=np.float32)
-        fine_noise *= np.float32(paper_grain * 0.42)
-        laid_period = float(rng.uniform(5.0, 9.0))
+        fine_noise *= np.float32(paper_grain * 0.36)
+        # Subtle high-frequency horizontal laid-wire texture
+        laid_period = float(rng.uniform(4.5, 8.0))
         y_idx = np.arange(height, dtype=np.float32)
         laid_wave = np.sin(2.0 * np.pi * y_idx / laid_period + float(rng.uniform(0.0, 2.0 * np.pi)))
-        laid_1d = (laid_wave * (paper_grain * 0.16)).astype(np.float32)
+        laid_1d = (laid_wave * (paper_grain * 0.14)).astype(np.float32)
         fine_noise += laid_1d[:, None]
+        # Subtle vertical rag-paper fiber streaks
+        fiber_h = max(16, height // 12)
+        fiber_w = max(32, width // 6)
+        fiber = _bilinear_upsample(
+            rng.normal(0.0, 1.0, size=(fiber_h, fiber_w)).astype(np.float32),
+            height,
+            width,
+        )
+        fine_noise += fiber * np.float32(paper_grain * 0.14)
         img += fine_noise[:, :, None]
 
-    # 2. Multi-scale mottling & foxing
+    # 2. Subtle archival paper aging & fine-grain rag texture (replaces blobby low-freq cloud mottle)
     if paper_mottle > 0.0:
-        coarse_h = max(4, min(24, height // 64 + 4))
-        coarse_w = max(4, min(24, width // 64 + 4))
-        med_h = max(8, min(64, height // 24 + 6))
-        med_w = max(8, min(64, width // 24 + 6))
+        # Very gentle large-scale page warmth gradient (never heavy brown camouflage blotches)
+        grad_h = max(3, min(6, height // 256 + 3))
+        grad_w = max(3, min(6, width // 256 + 3))
+        fine_h = max(24, min(128, height // 16 + 8))
+        fine_w = max(24, min(128, width // 16 + 8))
 
-        coarse = _bilinear_upsample(
-            rng.normal(0.0, 1.0, size=(coarse_h, coarse_w)).astype(np.float32),
+        gentle_tone = _bilinear_upsample(
+            rng.normal(0.0, 1.0, size=(grad_h, grad_w)).astype(np.float32),
             height,
             width,
         )
-        medium = _bilinear_upsample(
-            rng.normal(0.0, 1.0, size=(med_h, med_w)).astype(np.float32),
+        fine_rag = _bilinear_upsample(
+            rng.normal(0.0, 1.0, size=(fine_h, fine_w)).astype(np.float32),
             height,
             width,
         )
-        mottle = (0.65 * coarse + 0.35 * medium) * (paper_mottle * 0.38)
-        # Warm sepia tint on darker mottled areas
-        img[:, :, 0] += mottle * 0.85
-        img[:, :, 1] += mottle * 1.00
-        img[:, :, 2] += mottle * 1.25
+        mottle = (0.45 * gentle_tone + 0.55 * fine_rag) * np.float32(min(paper_mottle, 0.25) * 0.11)
+        # Subtle warm sepia aging tint
+        img[:, :, 0] += mottle * 0.82
+        img[:, :, 1] += mottle * 0.96
+        img[:, :, 2] += mottle * 1.15
 
-        # Occasional small warm-brown foxing spots on aged paper
+        # Occasional small, delicate warm-brown foxing specks on aged paper
         if paper_mottle >= 0.08:
-            n_spots = int(rng.integers(3, max(4, int(28 * paper_mottle) + 4)))
+            n_spots = int(rng.integers(2, max(3, int(14 * min(paper_mottle, 0.25)) + 3)))
             yy, xx = np.ogrid[:height, :width]
             for _ in range(n_spots):
                 cy = float(rng.uniform(0.0, height))
                 cx = float(rng.uniform(0.0, width))
-                rad = float(rng.uniform(3.0, max(5.0, min(height, width) * 0.025)))
+                rad = float(rng.uniform(2.0, max(3.5, min(height, width) * 0.010)))
                 y0 = max(0, int(cy - rad * 2.5))
                 y1 = min(height, int(cy + rad * 2.5) + 1)
                 x0 = max(0, int(cx - rad * 2.5))
@@ -133,13 +144,13 @@ def make_manuscript_paper(
                 dy = (yy[y0:y1, :] - cy).astype(np.float32)
                 dx = (xx[:, x0:x1] - cx).astype(np.float32)
                 dist2 = (dy * dy + dx * dx) / (rad * rad + 1e-6)
-                spot = np.exp(-0.5 * dist2) * float(rng.uniform(0.03, 0.14) * paper_mottle * 4.0)
+                spot = np.exp(-0.5 * dist2) * float(rng.uniform(0.02, 0.07) * min(paper_mottle, 0.25) * 2.2)
                 img[y0:y1, x0:x1, 0] -= spot * 0.55
                 img[y0:y1, x0:x1, 1] -= spot * 0.85
-                img[y0:y1, x0:x1, 2] -= spot * 1.20
+                img[y0:y1, x0:x1, 2] -= spot * 1.15
 
     # 3. Aged sepia edge darkening (subtle vignette)
-    edge_strength = float(0.02 + 0.32 * paper_mottle)
+    edge_strength = float(0.015 + 0.16 * min(paper_mottle, 0.25))
     yn = np.linspace(-1.0, 1.0, height, dtype=np.float32)[:, None]
     xn = np.linspace(-1.0, 1.0, width, dtype=np.float32)[None, :]
     r2 = np.clip(0.5 * (xn * xn + yn * yn), 0.0, 1.0)
@@ -148,30 +159,75 @@ def make_manuscript_paper(
     img[:, :, 1] -= vignette * 0.92
     img[:, :, 2] -= vignette * 1.18
 
-    # 4. Reverse-side bleed-through ghosting
+    # 4. Reverse-side bleed-through ghosting (horizontally-mirrored verso staves, noteheads, stems, beams & barlines)
     if bleed_through > 0.01:
-        ghost = np.zeros((height, width), dtype=np.float32)
-        # Faint reverse-side staff bands
-        n_staves = max(2, min(10, height // 140))
-        sp_ghost = max(4.0, height / (n_staves * 14.0))
-        margin_x = int(width * 0.08)
+        sh, sw = max(64, height // 2), max(64, width // 2)
+        ghost_half = np.zeros((sh, sw), dtype=np.float32)
+        n_staves = max(3, min(10, sh // 95))
+        sp_ghost = max(3.0, sh / (n_staves * 13.5))
+        margin_x = int(sw * 0.075)
+        span_x = max(16, sw - 2 * margin_x)
+        yy_g, xx_g = np.ogrid[:sh, :sw]
         for s in range(n_staves):
-            y_base = (s + 0.65) * (height / (n_staves + 0.3)) + float(rng.uniform(-sp_ghost, sp_ghost))
+            y_base = (s + 0.62) * (sh / (n_staves + 0.30)) + float(rng.uniform(-sp_ghost * 0.8, sp_ghost * 0.8))
+            # Faint verso 5-line staff
             for li in range(-2, 3):
                 yl = int(round(y_base + li * sp_ghost))
-                if 1 <= yl < height - 1:
-                    ghost[yl - 1 : yl + 2, margin_x : width - margin_x] += np.array(
-                        [[0.25], [0.55], [0.25]], dtype=np.float32
+                if 1 <= yl < sh - 1:
+                    ghost_half[yl, margin_x : sw - margin_x] = np.maximum(
+                        ghost_half[yl, margin_x : sw - margin_x], 0.38
                     )
-        # Soft blurred reverse-side note blobs
-        blob_h = max(8, height // 16)
-        blob_w = max(8, width // 16)
-        raw_blobs = (rng.random((blob_h, blob_w), dtype=np.float32) > 0.72).astype(np.float32)
-        raw_blobs *= rng.uniform(0.3, 1.0, size=(blob_h, blob_w)).astype(np.float32)
-        soft_blobs = _bilinear_upsample(raw_blobs, height, width)
-        ghost = np.clip(0.35 * ghost + 0.65 * soft_blobs, 0.0, 1.0)
-        alpha = (ghost * (bleed_through * 0.42))[:, :, None]
-        img = img * (1.0 - alpha) + ink_rgb[None, None, :] * alpha
+            # Faint verso barlines (5-7 bars per system)
+            n_bars = int(rng.integers(5, 8))
+            for bx in np.linspace(margin_x, sw - margin_x, n_bars + 1):
+                ix = int(np.clip(round(bx), 1, sw - 2))
+                y0_b = max(0, int(round(y_base - 2.0 * sp_ghost)))
+                y1_b = min(sh, int(round(y_base + 2.0 * sp_ghost)) + 1)
+                ghost_half[y0_b:y1_b, ix] = np.maximum(ghost_half[y0_b:y1_b, ix], 0.50)
+            # Elliptical verso noteheads + thin stems + occasional beams
+            n_notes = int(rng.integers(14, 28))
+            note_xs = np.sort(rng.uniform(margin_x + sp_ghost * 1.5, sw - margin_x - sp_ghost * 1.5, size=n_notes))
+            rx = max(1.4, sp_ghost * 0.52)
+            ry = max(1.0, sp_ghost * 0.36)
+            stem_h = max(4, int(round(sp_ghost * 2.9)))
+            prev_tip: Optional[tuple[int, int]] = None
+            for ni, nxf in enumerate(note_xs):
+                nyf = float(np.clip(y_base + rng.uniform(-2.4, 2.4) * sp_ghost, 4.0, sh - 5.0))
+                nx_i, ny_i = int(round(nxf)), int(round(nyf))
+                y0_n, y1_n = max(0, int(nyf - ry - 1)), min(sh, int(nyf + ry + 2))
+                x0_n, x1_n = max(0, int(nxf - rx - 1)), min(sw, int(nxf + rx + 2))
+                if y1_n > y0_n and x1_n > x0_n:
+                    d2 = ((yy_g[y0_n:y1_n, :] - nyf) / (ry + 1e-6)) ** 2 + ((xx_g[:, x0_n:x1_n] - nxf) / (rx + 1e-6)) ** 2
+                    blob = np.clip(1.2 - d2, 0.0, 1.0).astype(np.float32) * 0.85
+                    ghost_half[y0_n:y1_n, x0_n:x1_n] = np.maximum(ghost_half[y0_n:y1_n, x0_n:x1_n], blob)
+                if nyf > y_base:
+                    sx_i = min(sw - 1, nx_i + int(round(rx * 0.8)))
+                    ty_i = max(0, ny_i - stem_h)
+                    ghost_half[ty_i:ny_i, sx_i] = np.maximum(ghost_half[ty_i:ny_i, sx_i], 0.65)
+                else:
+                    sx_i = max(0, nx_i - int(round(rx * 0.8)))
+                    ty_i = min(sh - 1, ny_i + stem_h)
+                    ghost_half[ny_i:ty_i, sx_i] = np.maximum(ghost_half[ny_i:ty_i, sx_i], 0.65)
+                # Connect pairs into faint verso beams
+                if prev_tip is not None and (ni % 2 == 1) and abs(sx_i - prev_tip[0]) < span_x * 0.12 and abs(ty_i - prev_tip[1]) < sp_ghost * 2.5:
+                    x_a, y_a = prev_tip
+                    n_steps = max(2, abs(sx_i - x_a) + 1)
+                    bxs = np.linspace(x_a, sx_i, n_steps).astype(np.int32)
+                    bys = np.linspace(y_a, ty_i, n_steps).astype(np.int32)
+                    for bx_i, by_i in zip(bxs, bys):
+                        if 1 <= by_i < sh - 1 and 0 <= bx_i < sw:
+                            ghost_half[by_i - 1 : by_i + 1, bx_i] = np.maximum(ghost_half[by_i - 1 : by_i + 1, bx_i], 0.72)
+                    prev_tip = None
+                else:
+                    prev_tip = (sx_i, ty_i)
+        # Mirror horizontally (verso side shows through reversed!) and gently soften
+        ghost_u8 = np.ascontiguousarray(np.clip(ghost_half[:, ::-1], 0.0, 1.0) * 255.0, dtype=np.uint8)
+        from PIL import ImageFilter
+        pil_g = Image.fromarray(ghost_u8, mode="L").filter(ImageFilter.BoxBlur(1.2))
+        ghost = np.asarray(pil_g.resize((int(width), int(height)), Image.BILINEAR), dtype=np.float32) * np.float32(1.0 / 255.0)
+        verso_rgb = np.clip(ink_rgb * 0.65 + np.array([0.24, 0.20, 0.15], dtype=np.float32), 0.0, 1.0)
+        alpha = (np.clip(ghost, 0.0, 1.0) * (min(bleed_through, 0.25) * 0.28))[:, :, None]
+        img = img * (1.0 - alpha) + verso_rgb[None, None, :] * alpha
 
     # 5. Optional faint eraser smudges
     if eraser_smudge_prob > 0.0 and float(rng.random()) < eraser_smudge_prob:
@@ -353,6 +409,34 @@ def make_manuscript_paper(
         dist_edge = xs_g if binding_mode == "book_gutter_shadow_left" else (width - 1.0 - xs_g)
         shadow = np.exp(-dist_edge / max(24.0, width * 0.065)) * np.float32(0.30)
         img *= (1.0 - shadow[None, :, None])
+
+    # 9. Optional dark archival scanner-bed margins (1-4% border with subtle paper-edge shadow)
+    scan_frac = float(np.clip(style.get("scanner_margin_frac", 0.0), 0.0, 0.05))
+    if scan_frac >= 0.005:
+        mx_l = max(2, int(round(width * scan_frac * float(rng.uniform(0.70, 1.25)))))
+        mx_r = max(2, int(round(width * scan_frac * float(rng.uniform(0.70, 1.25)))))
+        my_t = max(2, int(round(height * scan_frac * float(rng.uniform(0.70, 1.25)))))
+        my_b = max(2, int(round(height * scan_frac * float(rng.uniform(0.70, 1.25)))))
+        bed_val = float(rng.uniform(0.08, 0.14))
+        bed_rgb = np.array([bed_val, bed_val * 0.98, bed_val * 0.95], dtype=np.float32)
+        # Soft paper-edge drop shadow (3-6px inside the sheet)
+        sh_w = max(3, int(round(min(width, height) * 0.004)))
+        if my_t + sh_w < height - my_b and mx_l + sh_w < width - mx_r:
+            for k in range(sh_w):
+                fade = float(np.exp(-0.7 * (k + 1))) * 0.22
+                img[my_t + k, mx_l : width - mx_r, :] *= np.float32(1.0 - fade)
+                img[height - my_b - 1 - k, mx_l : width - mx_r, :] *= np.float32(1.0 - fade)
+                img[my_t : height - my_b, mx_l + k, :] *= np.float32(1.0 - fade)
+                img[my_t : height - my_b, width - mx_r - 1 - k, :] *= np.float32(1.0 - fade)
+        # Fill outer scanner-bed margins with dark matte texture
+        bed_noise_t = rng.normal(0.0, 0.012, size=(my_t, width, 1)).astype(np.float32)
+        bed_noise_b = rng.normal(0.0, 0.012, size=(my_b, width, 1)).astype(np.float32)
+        bed_noise_l = rng.normal(0.0, 0.012, size=(height, mx_l, 1)).astype(np.float32)
+        bed_noise_r = rng.normal(0.0, 0.012, size=(height, mx_r, 1)).astype(np.float32)
+        img[:my_t, :, :] = bed_rgb[None, None, :] + bed_noise_t
+        img[height - my_b :, :, :] = bed_rgb[None, None, :] + bed_noise_b
+        img[:, :mx_l, :] = bed_rgb[None, None, :] + bed_noise_l
+        img[:, width - mx_r :, :] = bed_rgb[None, None, :] + bed_noise_r
 
     return np.clip(img, 0.0, 1.0).astype(np.float32, copy=False)
 

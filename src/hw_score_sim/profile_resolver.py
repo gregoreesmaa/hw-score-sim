@@ -30,6 +30,259 @@ from .catalog import (
 from .expressive_glyphs import resolve_expressive_archetypes
 
 
+# ---------------------------------------------------------------------------
+# Curated Historical-Clean Whitelists (Quarantines Broken/Cartoonish Styles)
+# ---------------------------------------------------------------------------
+
+HISTORICAL_CLEAN_NOTEHEADS: Tuple[str, ...] = (
+    "oval",
+    "teardrop",
+    "compact",
+    "slash",
+    "heavy_wedge",
+    "broad_nib_lozenge",
+)
+
+HISTORICAL_CLEAN_STEMS: Tuple[str, ...] = (
+    "straight_classic",
+    "tapered_quill",
+    "tall_spindly",
+)
+
+HISTORICAL_CLEAN_FLAGS: Tuple[str, ...] = (
+    "classic_droop",
+    "baroque_curl",
+    "sharp_angular_7",
+    "calligraphic_ribbon",
+    "broad_nib_pennant",
+    "steep_vertical_drop",
+)
+
+HISTORICAL_CLEAN_BEAMS: Tuple[str, ...] = (
+    "straight_classic",
+    "tapered_wedge",
+    "calligraphic_ribbon",
+    "tight_crammed_bars",
+)
+
+HISTORICAL_CLEAN_BEAM_SLOPES: Tuple[str, ...] = (
+    "engraver_gentle",
+    "horizontal_flat",
+    "steep_contour",
+)
+
+HISTORICAL_CLEAN_BEAM_GROUPINGS: Tuple[str, ...] = (
+    "standard_beat",
+    "long_phrase_beam",
+    "pair_beams_2",
+    "french_broken_secondary",
+)
+
+HISTORICAL_CLEAN_CLEFS: Tuple[str, ...] = (
+    "classic_engraved",
+    "baroque_ornate_scroll",
+    "chopin_delicate_spiral",
+    "calligraphic_broad_nib",
+    "hurried_single_loop",
+    "figure_8_treble",
+)
+
+HISTORICAL_CLEAN_KEYSIGS: Tuple[str, ...] = (
+    "classic_neat",
+    "calligraphic_nib_acc",
+    "baroque_vertical_flat",
+    "pointed_teardrop_flat",
+    "tall_narrow_sharp",
+)
+
+HISTORICAL_CLEAN_BARLINES: Tuple[str, ...] = (
+    "crisp_vertical",
+    "tapered_quill_bar",
+    "tall_overshoot",
+    "tight_double_gap",
+)
+
+HISTORICAL_CLEAN_PAPER_TYPES: Tuple[str, ...] = (
+    "aged_rag",
+    "cream_manuscript",
+    "bright_white",
+)
+
+HISTORICAL_CLEAN_BINDINGS: Tuple[str, ...] = (
+    "none",
+    "book_gutter_shadow_left",
+    "book_gutter_shadow_right",
+)
+
+HISTORICAL_CLEAN_GRIDS: Tuple[str, ...] = (
+    "none",
+    "heavy_laid_chainlines",
+)
+
+HISTORICAL_CLEAN_PERSONAS: Tuple[str, ...] = (
+    "none",
+    "archival_librarian",
+    "composer_working_draft",
+    "piano_conservatory",
+    "choral_rehearsal",
+    "string_section_pencil",
+)
+
+HISTORICAL_CLEAN_FURNITURE: Tuple[str, ...] = (
+    "none",
+    "baroque_archival_folio",
+    "classical_fair_copy_header",
+    "minimal_running_folio",
+)
+
+HISTORICAL_CLEAN_MEASURE_NUMBERS: Tuple[str, ...] = (
+    "none",
+    "plain",
+    "italic_underlined",
+)
+
+
+def _deterministic_pick(domain: str, name: str, era: str, allowed: Sequence[str]) -> str:
+    idx = int(_u01(domain, name, era) * len(allowed)) % len(allowed)
+    return str(allowed[idx])
+
+
+def sanitize_historical_clean_style(
+    style: Dict[str, Any],
+    *,
+    clean_paper: bool = False,
+) -> Dict[str, Any]:
+    """Clamp & quarantine semantically broken or anachronistic parameters for historical archival realism.
+
+    Returns a new style dict without mutating ``style``.
+    """
+    out = dict(style or {})
+    name = str(out.get("name", "unnamed"))
+    era = str(out.get("era", "classical"))
+
+    # 1. Quarantine broken / cartoonish glyph archetypes
+    def _enforce(key: str, allowed: Sequence[str], domain: str) -> None:
+        val = out.get(key)
+        if val not in allowed:
+            out[key] = _deterministic_pick(domain, name, era, allowed)
+
+    _enforce("notehead_archetype", HISTORICAL_CLEAN_NOTEHEADS, "hc_nh")
+    _enforce("stem_archetype", HISTORICAL_CLEAN_STEMS, "hc_stem")
+    _enforce("flag_archetype", HISTORICAL_CLEAN_FLAGS, "hc_flag")
+    _enforce("beam_archetype", HISTORICAL_CLEAN_BEAMS, "hc_beam")
+    _enforce("beam_slope_style", HISTORICAL_CLEAN_BEAM_SLOPES, "hc_bslope")
+    _enforce("beam_grouping_mode", HISTORICAL_CLEAN_BEAM_GROUPINGS, "hc_bgrp")
+    _enforce("clef_archetype", HISTORICAL_CLEAN_CLEFS, "hc_clef")
+    _enforce("keysig_archetype", HISTORICAL_CLEAN_KEYSIGS, "hc_ksig")
+    _enforce("barline_archetype", HISTORICAL_CLEAN_BARLINES, "hc_bar")
+
+    # 2. Enforce solid filled noteheads & readable stroke/stem/beam physics
+    # Keep notehead_fill_density >= 1.00 and tame phrase/ink variance so filled noteheads NEVER render hollow
+    out["notehead_fill_density"] = float(np.clip(out.get("notehead_fill_density", 1.08), 1.00, 1.25))
+    out["phrase_arc_mod"] = float(np.clip(out.get("phrase_arc_mod", 0.08), 0.0, 0.14))
+    out["downbeat_weight_boost"] = float(np.clip(out.get("downbeat_weight_boost", 0.08), 0.0, 0.14))
+    out["ink_var"] = float(np.clip(out.get("ink_var", 0.10), 0.04, 0.14))
+    out["ink_dip_period"] = 0
+    out["notehead_aspect"] = float(np.clip(out.get("notehead_aspect", 1.0), 0.80, 1.22))
+    out["notehead_scale"] = float(np.clip(out.get("notehead_scale", 1.0), 0.90, 1.15))
+    out["hollow_open_prob"] = float(np.clip(out.get("hollow_open_prob", 0.08), 0.0, 0.16))
+    out["stroke_scale"] = float(np.clip(out.get("stroke_scale", 1.0), 0.82, 1.28))
+    out["stem_length_scale"] = float(np.clip(out.get("stem_length_scale", 1.0), 0.85, 1.15))
+    out["beam_thickness_scale"] = float(np.clip(out.get("beam_thickness_scale", 1.05), 0.85, 1.35))
+    out["barline_overshoot_sp"] = float(np.clip(out.get("barline_overshoot_sp", 0.12), 0.0, 0.22))
+
+    # Ban fake curly hooks on quarter-note stems & detached beams
+    out["ligature_prob"] = 0.0
+    out["stem_wrong_side_prob"] = 0.0
+    out["stem_center_mix_prob"] = 0.0
+    out["beam_junction_gap_prob"] = 0.0
+    out["beam_junction_overshoot_sp"] = float(np.clip(out.get("beam_junction_overshoot_sp", 0.05), 0.0, 0.10))
+    out["beam_edge_overhang_sp"] = float(np.clip(out.get("beam_edge_overhang_sp", 0.05), 0.0, 0.10))
+
+    # 3. Clamp global italic shear <= 5 deg & tame wobble/tremor/skew
+    out["slant_deg"] = float(np.clip(out.get("slant_deg", 2.0), -5.0, 5.0))
+    out["wobble_px"] = float(np.clip(out.get("wobble_px", 0.65), 0.15, 1.05))
+    out["tremor_px"] = float(np.clip(out.get("tremor_px", 0.10), 0.0, 0.22))
+    out["staff_curve_px"] = float(np.clip(out.get("staff_curve_px", 2.0), 0.0, 3.5))
+    out["staff_slope_deg"] = float(np.clip(out.get("staff_slope_deg", 0.30), -0.6, 0.6))
+    out["sp_jitter_frac"] = float(np.clip(out.get("sp_jitter_frac", 0.02), 0.0, 0.03))
+    out["page_skew_drift_px"] = 0.0
+    out["ink_dropout"] = float(np.clip(out.get("ink_dropout", 0.06), 0.0, 0.14))
+    out["split_nib_prob"] = float(np.clip(out.get("split_nib_prob", 0.04), 0.0, 0.12))
+
+    # 4. Ban anachronistic modern clutter (timecodes, spiral rings, 3-hole punches, red/blue eyeglasses, jazz chords, border boxes)
+    _enforce("annotation_persona", HISTORICAL_CLEAN_PERSONAS, "hc_pers")
+    out["overlay_density"] = float(np.clip(out.get("overlay_density", 0.18), 0.0, 0.30))
+    out["chord_symbols_prob"] = 0.0
+    out["chord_symbol_style"] = "none"
+    out["scratch_out_prob"] = 0.0
+    out["caret_callout_prob"] = 0.0
+    out["margin_annotations_prob"] = float(np.clip(out.get("margin_annotations_prob", 0.08), 0.0, 0.12))
+    _enforce("page_furniture_mode", HISTORICAL_CLEAN_FURNITURE, "hc_furn")
+    _enforce("measure_number_style", HISTORICAL_CLEAN_MEASURE_NUMBERS, "hc_mnum")
+    if out["measure_number_style"] == "none":
+        out["measure_numbers_prob"] = 0.0
+    else:
+        out["measure_numbers_prob"] = float(np.clip(out.get("measure_numbers_prob", 0.65), 0.0, 0.80))
+
+    # 5. Historical paper stock, warm pre-ruled rastrum staves & high note-to-staff ink contrast
+    _enforce("paper_type", HISTORICAL_CLEAN_PAPER_TYPES, "hc_paper")
+    _enforce("paper_binding_mode", HISTORICAL_CLEAN_BINDINGS, "hc_bind")
+    _enforce("paper_background_grid", HISTORICAL_CLEAN_GRIDS, "hc_grid")
+    out["paper_border_mode"] = "none"
+    out["paper_grain"] = float(np.clip(out.get("paper_grain", 0.065), 0.03, 0.10))
+    out["paper_mottle"] = float(np.clip(out.get("paper_mottle", 0.07), 0.02, 0.12))
+    out["bleed_through"] = float(np.clip(out.get("bleed_through", 0.08), 0.03, 0.14))
+    out["verso_bleed_strength"] = 0.0  # handled cleanly by layout_quirks mirrored bleed-through
+    out["stain_prob"] = float(np.clip(out.get("stain_prob", 0.02), 0.0, 0.05))
+    out["ink_blot_prob"] = float(np.clip(out.get("ink_blot_prob", 0.03), 0.0, 0.08))
+    out["palm_smear_prob"] = float(np.clip(out.get("palm_smear_prob", 0.05), 0.0, 0.12))
+    out["dog_ear_prob"] = 0.0  # avoid painting corner fold over dark scanner-bed border
+
+    # Darken/warm foreground ink if too pale/saturated so noteheads & beams pop sharply
+    ink = np.asarray(out.get("ink_rgb", (0.14, 0.11, 0.09)), dtype=np.float64)
+    lum = float(0.299 * ink[0] + 0.587 * ink[1] + 0.114 * ink[2])
+    if lum > 0.22:
+        ink = ink * (0.18 / max(lum, 1e-4))
+    # Pull bright blue/red inks into archival iron-gall / sepia-charcoal range
+    if float(np.max(ink) - np.min(ink)) > 0.14:
+        ink = 0.35 * ink + 0.65 * np.array([0.14, 0.11, 0.09], dtype=np.float64)
+    ink = np.clip(ink, 0.04, 0.24)
+    out["ink_rgb"] = tuple(round(float(c), 4) for c in ink)
+
+    # Lighter, warmer-brown pre-ruled rastrum staff lines for strong note-to-staff contrast
+    rastrum_warm = np.array([0.58, 0.49, 0.39], dtype=np.float64)
+    staff_ink = np.clip(0.25 * ink + 0.75 * rastrum_warm, 0.38, 0.66)
+    out["staff_ink_rgb"] = tuple(round(float(c), 4) for c in staff_ink)
+    out["staff_ruling_mode"] = "rastrum_coherent_quill"
+    out["staff_line_width_ratio"] = 0.068
+    out["rastrum_wobble"] = float(np.clip(out.get("rastrum_wobble", 0.85), 0.35, 1.35))
+
+    # Tighter horizontal density (5-8 bars/system) & slightly compact sp + 1-3 unused rastrum staves
+    out["sp_scale_mult"] = float(np.clip(out.get("sp_scale_mult", 0.90), 0.82, 0.96))
+    out["inter_system_gap_mult"] = float(np.clip(out.get("inter_system_gap_mult", 0.88), 0.78, 0.98))
+    out["intra_gap_mult"] = float(np.clip(out.get("intra_gap_mult", 0.90), 0.80, 1.00))
+    out["blank_prerule_prob"] = max(float(out.get("blank_prerule_prob", 0.65)), 0.65)
+    out["historical_clean"] = True
+
+    if clean_paper:
+        out["paper_binding_mode"] = "none"
+        out["paper_background_grid"] = "none"
+        out["paper_border_mode"] = "none"
+        out["scanner_margin_frac"] = 0.0
+        out["verso_bleed_strength"] = 0.0
+        out["fold_crease_prob"] = 0.0
+        out["foxing_cluster_prob"] = 0.0
+        out["ink_blot_prob"] = 0.0
+        out["palm_smear_prob"] = 0.0
+        out["dog_ear_prob"] = 0.0
+    else:
+        if "scanner_margin_frac" not in out or out["scanner_margin_frac"] is None:
+            out["scanner_margin_frac"] = round(0.015 + 0.018 * _u01("hc_scan", name, era), 4)
+
+    return out
+
+
 def _u01(domain: str, name: str, era: str) -> float:
     digest = hashlib.sha256(f"v03:{domain}:{name}:{era}".encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") / float(1 << 64)
@@ -56,6 +309,7 @@ def resolve_page_and_expressive_profile(
     style: Dict[str, Any],
     *,
     clean_paper: bool = False,
+    historical_clean: bool = False,
 ) -> Dict[str, Any]:
     """Derive a complete, deterministic Layers 1–4 profile for any style dict.
 
@@ -347,11 +601,15 @@ def resolve_page_and_expressive_profile(
         resolved["paper_binding_mode"] = "none"
         resolved["paper_background_grid"] = "none"
         resolved["paper_border_mode"] = "none"
+        resolved["scanner_margin_frac"] = 0.0
         resolved["verso_bleed_strength"] = 0.0
         resolved["fold_crease_prob"] = 0.0
         resolved["foxing_cluster_prob"] = 0.0
         resolved["ink_blot_prob"] = 0.0
         resolved["palm_smear_prob"] = 0.0
         resolved["dog_ear_prob"] = 0.0
+
+    if historical_clean:
+        resolved = sanitize_historical_clean_style(resolved, clean_paper=clean_paper)
 
     return resolved

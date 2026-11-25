@@ -113,6 +113,14 @@ def layout_score_pages(
     furn_mode = str(style.get("page_furniture_mode") or "none").strip().lower()
     if furn_mode != "none":
         mt_frac = max(mt_frac, 0.135)
+    # Reserve clearance for optional dark scanner-bed margins
+    scan_frac = float(np.clip(style.get("scanner_margin_frac", 0.0), 0.0, 0.05))
+    if scan_frac >= 0.005:
+        pad_s = scan_frac * 1.45
+        ml_frac = max(ml_frac, pad_s + 0.040)
+        mr_frac = max(mr_frac, pad_s + 0.038)
+        mt_frac = max(mt_frac, pad_s + 0.045)
+        mb_frac = max(mb_frac, pad_s + 0.040)
 
     x_left_base = page_w * ml_frac
     x_right_base = page_w * (1.0 - mr_frac)
@@ -153,7 +161,11 @@ def layout_score_pages(
             inter_system_gap = max(4.5 * sp, inter_system_gap * shrink)
             system_h = n_staves * staff_h + (n_staves - 1) * intra_gap
 
-    bars_per_sys_default = 4 if n_staves >= 2 else 5
+    is_hist_clean = bool(style.get("historical_clean", False))
+    if is_hist_clean:
+        bars_per_sys_default = 6 if n_staves >= 2 else 7
+    else:
+        bars_per_sys_default = 4 if n_staves >= 2 else 5
     bar_width_var = float(style.get("bar_width_var", 0.12))
     prerule_prob = float(style.get("blank_prerule_prob", 0.0))
     est_systems = max(2, int(math.ceil(max(1, total_measures) / float(bars_per_sys_default))))
@@ -163,10 +175,60 @@ def layout_score_pages(
     m_cursor = 0
     sys_idx = 0
 
-    while y_cursor + system_h - staff_h * 0.5 <= page_h - margin_bottom:
+    # In historical_clean mode, plan 1-3 unused pre-ruled rastrum staves (top / inter-system / bottom)
+    hc_target_unused = rng.randint(1, 3) if is_hist_clean else 0
+    hc_placed_unused = 0
+    blank_step_h = staff_h + max(4.2 * sp, inter_system_gap * 0.72)
+    # Reserve vertical space at bottom for at least 1 unused rastrum staff when page height allows
+    hc_bottom_reserve = (inter_system_gap + staff_h) if (is_hist_clean and avail_h >= system_h + inter_system_gap + staff_h * 1.5) else 0.0
+    hc_inter_after_sys = rng.randint(0, 1) if (is_hist_clean and hc_target_unused >= 2) else -1
+
+    def _append_blank_staff() -> bool:
+        nonlocal sys_idx, y_cursor, hc_placed_unused
+        if y_cursor + staff_h * 0.5 > page_h - margin_bottom:
+            return False
+        staves_b = [
+            StaffLayout(
+                part_index=0,
+                part_name="blank",
+                brace_group=None,
+                x_left=x_left_base,
+                x_right=x_right_base,
+                y_center=y_cursor,
+                sp=sp,
+            )
+        ]
+        systems.append(
+            SystemLayout(
+                system_index=sys_idx,
+                measure_start=0,
+                measure_end=0,
+                x_left=x_left_base,
+                x_right=x_right_base,
+                bar_x_bounds=[],
+                staves=staves_b,
+                is_blank_prerule=True,
+            )
+        )
+        sys_idx += 1
+        hc_placed_unused += 1
+        y_cursor += blank_step_h
+        return True
+
+    # Optional unused pre-ruled rastrum staff at top of page in historical_clean mode
+    if (
+        is_hist_clean
+        and hc_target_unused >= 2
+        and rng.random() < 0.45
+        and avail_h >= system_h + blank_step_h * 2.2
+    ):
+        _append_blank_staff()
+
+    active_sys_count = 0
+    while y_cursor + system_h - staff_h * 0.5 <= page_h - margin_bottom - (hc_bottom_reserve if hc_placed_unused == 0 else 0.0):
         prog = sys_idx / float(max(1, est_systems - 1))
         drift = skew_drift_px * (prog - 0.5)
-        indent = print_w * first_indent_frac if sys_idx == 0 else 0.0
+        indent = print_w * first_indent_frac if active_sys_count == 0 else 0.0
         left_jit = print_w * rng.uniform(-0.018, 0.018) if layout_mode == "ragged_sketch_autograph" else 0.0
         right_pull = print_w * rng.uniform(0.0, rag_jitter_frac) if rag_jitter_frac > 0.0 else 0.0
         x_left = max(16.0, x_left_base + indent + drift + left_jit)
@@ -175,10 +237,10 @@ def layout_score_pages(
             x_left, x_right = x_left_base, x_right_base
 
         if m_cursor < total_measures:
+            delta_choices = [-1, 0, 0, 1] if (total_measures - m_cursor > bars_per_sys_default + 1) else [0]
             bars_this_sys = min(
                 total_measures - m_cursor,
-                bars_per_sys_default
-                + (rng.choice([-1, 0, 0, 1]) if total_measures - m_cursor > 5 else 0),
+                bars_per_sys_default + rng.choice(delta_choices),
             )
             bars_this_sys = max(1, bars_this_sys)
             m_start = m_cursor
@@ -236,9 +298,26 @@ def layout_score_pages(
                 )
             )
             sys_idx += 1
+            active_sys_count += 1
             y_cursor += system_h + inter_system_gap
+
+            # Optional inter-system unused pre-ruled staff in historical_clean mode
+            if (
+                is_hist_clean
+                and hc_placed_unused < hc_target_unused - 1
+                and active_sys_count - 1 == hc_inter_after_sys
+                and m_cursor < total_measures
+                and y_cursor + blank_step_h + system_h - staff_h * 0.5 <= page_h - margin_bottom
+            ):
+                _append_blank_staff()
         else:
-            if prerule_prob > 0.0 and rng.random() < prerule_prob:
+            if is_hist_clean:
+                if hc_placed_unused < hc_target_unused:
+                    if not _append_blank_staff():
+                        break
+                else:
+                    break
+            elif prerule_prob > 0.0 and rng.random() < prerule_prob:
                 staves = [
                     StaffLayout(
                         part_index=0,
@@ -265,6 +344,12 @@ def layout_score_pages(
                 sys_idx += 1
                 y_cursor += staff_h + inter_system_gap
             else:
+                break
+
+    # Ensure at least 1 (up to hc_target_unused) unused rastrum staff at bottom in historical_clean mode
+    if is_hist_clean:
+        while hc_placed_unused < hc_target_unused:
+            if not _append_blank_staff():
                 break
 
     return systems
@@ -1187,6 +1272,7 @@ def render_score_handwritten(
     export_train_dir: Optional[Union[str, Path]] = None,
     clean_paper: bool = False,
     max_parts: int = 6,
+    historical_clean: bool = False,
 ) -> Dict[str, Any]:
     """Render a MusicXML / MuseScore file in the given handwritten style.
 
@@ -1195,17 +1281,29 @@ def render_score_handwritten(
     MusicXML targets (plus optional bekern output when an external converter is available).
     When `clean_paper=True`, renders pure handwritten ink directly onto flat white `[1.0, 1.0, 1.0]`
     paper, skipping manuscript paper synthesis, pre-ink wear layers, and wet-ink/wear accidents.
+    When `historical_clean=True`, activates the curated historical manuscript mode: quarantines
+    semantically broken/cartoonish glyph archetypes and modern clutter, clamps italic shear <= 5 deg,
+    enforces solid filled noteheads and high ink-to-staff contrast with lighter warm-brown rastrum
+    staves, 1-3 unused pre-ruled staves, tighter 5-8 measures/system density, and archival paper.
     """
     score = parse_score(score_path)
     raw_style = styles.get_style(style_name) if hasattr(styles, "get_style") else styles.SCRIBE_STYLES[style_name]
     display_style_name = style_name if isinstance(style_name, str) else str(raw_style.get("name", "custom_style"))
+    eff_hist_clean = bool(historical_clean or raw_style.get("historical_clean", False))
     # Merge deterministic v0.3.0 Layers 1–4 profile (explicit keys in raw_style always win)
-    style = dict(profile_resolver.resolve_page_and_expressive_profile(raw_style, clean_paper=clean_paper))
+    style = dict(
+        profile_resolver.resolve_page_and_expressive_profile(
+            raw_style, clean_paper=clean_paper, historical_clean=eff_hist_clean
+        )
+    )
     style.update(raw_style)
-    if clean_paper:
+    if eff_hist_clean:
+        style = profile_resolver.sanitize_historical_clean_style(style, clean_paper=clean_paper)
+    elif clean_paper:
         style["paper_binding_mode"] = "none"
         style["paper_background_grid"] = "none"
         style["paper_border_mode"] = "none"
+        style["scanner_margin_frac"] = 0.0
         style["verso_bleed_strength"] = 0.0
         style["fold_crease_prob"] = 0.0
         style["foxing_cluster_prob"] = 0.0
@@ -2188,6 +2286,7 @@ def render_score_handwritten(
         "page_w": page_w,
         "page_h": page_h,
         "clean_paper": bool(clean_paper),
+        "historical_clean": bool(eff_hist_clean),
         "systems": gt_systems,
     }
     if manuscript_marks_log:

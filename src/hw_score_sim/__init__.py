@@ -64,7 +64,10 @@ from .structural_glyphs import (
     CLEF_ARCHETYPES,
     KEYSIG_ARCHETYPES,
 )
-from .profile_resolver import resolve_page_and_expressive_profile
+from .profile_resolver import (
+    resolve_page_and_expressive_profile,
+    sanitize_historical_clean_style,
+)
 from .styles import (
     BEAM_ARCHETYPES,
     BEAM_GROUPING_MODES,
@@ -157,6 +160,7 @@ __all__ = [
     "LIGATURE_PATTERNS",
     "resolve_ductus_param",
     "resolve_page_and_expressive_profile",
+    "sanitize_historical_clean_style",
     # Data structures
     "ParsedScore",
     "PartData",

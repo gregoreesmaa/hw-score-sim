@@ -100,6 +100,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Render pure handwritten ink on flat white paper, skipping paper aging/textures and wet-ink/wear accidents",
     )
     parser.add_argument(
+        "--historical-clean",
+        action="store_true",
+        help="Curated historical manuscript mode: quarantine broken/cartoonish styles & modern clutter, enforce solid noteheads, <=5 deg shear, warm pre-ruled rastrum staves, and 5-8 bars/system",
+    )
+    parser.add_argument(
         "--list-styles",
         action="store_true",
         help="Print all registered handwritten style names and exit",
@@ -135,6 +140,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 page_h=args.page_h,
                 export_train_dir=args.export_train_dir,
                 clean_paper=args.clean_paper,
+                historical_clean=args.historical_clean,
             )
         except KeyError:
             all_known = styles.list_styles()

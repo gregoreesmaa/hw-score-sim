@@ -458,6 +458,7 @@ class ScribeSampler:
         style_pool: Optional[Sequence[str]] = None,
         ink: Optional[str] = None,
         paper: Optional[str] = None,
+        historical_clean: bool = False,
     ) -> None:
         if preset not in DIFFICULTY_PRESETS:
             valid = ", ".join(DIFFICULTY_ORDER)
@@ -479,6 +480,7 @@ class ScribeSampler:
             raise ValueError("style_pool must be non-empty when provided")
         self.ink: Optional[str] = ink
         self.paper: Optional[str] = paper
+        self.historical_clean: bool = bool(historical_clean)
 
     def set_preset(self, preset: str) -> ScribeSampler:
         """Switch to a named difficulty preset and clear any continuous difficulty override."""
@@ -546,6 +548,10 @@ class ScribeSampler:
         resolved = _clamp_style_to_bounds(scribe, bounds)
         # Attach a deterministic readable name tied to the stateless seed.
         resolved["name"] = f"scribe_{scribe_seed & 0xFFFFFFFF:08x}"
+        if self.historical_clean:
+            from .profile_resolver import sanitize_historical_clean_style
+
+            resolved = sanitize_historical_clean_style(resolved)
         return resolved, render_seed
 
 
