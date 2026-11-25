@@ -263,6 +263,10 @@ def sanitize_historical_clean_style(
     out["inter_system_gap_mult"] = float(np.clip(out.get("inter_system_gap_mult", 0.88), 0.78, 0.98))
     out["intra_gap_mult"] = float(np.clip(out.get("intra_gap_mult", 0.90), 0.80, 1.00))
     out["blank_prerule_prob"] = max(float(out.get("blank_prerule_prob", 0.65)), 0.65)
+    if "omit_cont_header_prob" not in out or out["omit_cont_header_prob"] is None:
+        out["omit_cont_header_prob"] = 0.35
+    else:
+        out["omit_cont_header_prob"] = float(np.clip(out["omit_cont_header_prob"], 0.0, 1.0))
     out["historical_clean"] = True
 
     if clean_paper:
@@ -596,6 +600,7 @@ def resolve_page_and_expressive_profile(
     _set("chord_x_stagger_sp", float(np.clip(0.18 * chaos, 0.0, 0.24)))
     _set("accidental_x_offset_sp", _jitter(1.25, 1.02, 1.55, 0.24, "accoff", name, raw_era))
     _set("accidental_x_jitter_sp", float(np.clip(0.20 * chaos, 0.0, 0.28)))
+    _set("omit_cont_header_prob", 0.35 if historical_clean else 0.0)
 
     if clean_paper:
         resolved["paper_binding_mode"] = "none"

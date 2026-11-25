@@ -279,6 +279,7 @@ def render_sample(
     include_musicxml: bool = True,
     clean_paper: bool = False,
     historical_clean: bool = False,
+    omit_cont_header_prob: Optional[float] = None,
 ) -> RenderSample:
     """Render a score in memory and return a `RenderSample` with schema-1.0 GT metadata.
 
@@ -325,6 +326,7 @@ def render_sample(
             export_train_dir=None,
             clean_paper=bool(clean_paper),
             historical_clean=bool(historical_clean),
+            omit_cont_header_prob=omit_cont_header_prob,
         )
 
         # Load PIL image cleanly into memory before temp directory cleanup
@@ -404,6 +406,8 @@ def render_sample(
         "total_measures": total_measures,
         "rendered_measures": max_measure_end,
         "truncated": truncated,
+        "omit_cont_header_prob": float(raw_gt.get("omit_cont_header_prob", 0.0)),
+        "omit_cont_header": bool(raw_gt.get("omit_cont_header", False)),
         "systems": enriched_systems,
     }
     if "manuscript_marks" in raw_gt:

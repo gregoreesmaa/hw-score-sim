@@ -223,6 +223,114 @@ class TestHistoricalCleanMode(unittest.TestCase):
             # Dark scanner bed border present on historical-clean output
             self.assertLess(float(arr[2, 2].mean()), 60.0)
 
+    def test_omit_cont_header_prob_suppresses_sys2_clef_key_preserving_gt(self) -> None:
+        # Default prob: 0.0 when historical_clean=False, 0.35 when historical_clean=True
+        base_st = get_style("baroque_quill_neat")
+        res_off = profile_resolver.resolve_page_and_expressive_profile(base_st, historical_clean=False)
+        res_hc = profile_resolver.resolve_page_and_expressive_profile(base_st, historical_clean=True)
+        self.assertEqual(res_off["omit_cont_header_prob"], 0.0)
+        self.assertAlmostEqual(res_hc["omit_cont_header_prob"], 0.35, places=6)
+
+        xml = _make_multi_measure_xml(n_measures=24, two_staves=False)
+        with tempfile.TemporaryDirectory() as td:
+            xml_p = pathlib.Path(td) / "cont_hdr.musicxml"
+            xml_p.write_text(xml, encoding="utf-8")
+
+            s_drawn = render_sample(
+                xml_p,
+                "baroque_quill_neat",
+                seed=314,
+                page_w=1400,
+                page_h=1800,
+                clean_paper=True,
+                historical_clean=True,
+                omit_cont_header_prob=0.0,
+            )
+            s_omit = render_sample(
+                xml_p,
+                "baroque_quill_neat",
+                seed=314,
+                page_w=1400,
+                page_h=1800,
+                clean_paper=True,
+                historical_clean=True,
+                omit_cont_header_prob=1.0,
+            )
+
+            self.assertFalse(s_drawn.meta["omit_cont_header"])
+            self.assertTrue(s_omit.meta["omit_cont_header"])
+
+            # Exact GT MusicXML slices (and therefore exact bekern GT) must be identical
+            self.assertEqual(s_drawn.musicxml_systems, s_omit.musicxml_systems)
+            self.assertGreaterEqual(len(s_drawn.musicxml_systems), 2)
+
+            active_drawn = [s for s in s_drawn.meta["systems"] if not s["is_blank_prerule"]]
+            active_omit = [s for s in s_omit.meta["systems"] if not s["is_blank_prerule"]]
+            self.assertGreaterEqual(len(active_drawn), 2)
+            self.assertEqual(len(active_drawn), len(active_omit))
+
+            arr_drawn = np.asarray(s_drawn.image, dtype=np.float32)
+            arr_omit = np.asarray(s_omit.image, dtype=np.float32)
+
+            def _header_ink_count(arr: np.ndarray, staff_dict: dict) -> int:
+                sp = float(staff_dict["sp"])
+                x0 = int(max(0, staff_dict["x_left"] + sp * 0.4))
+                x1 = int(min(arr.shape[1], staff_dict["x_left"] + sp * 3.3))
+                y0 = int(max(0, staff_dict["y_center"] - sp * 3.5))
+                y1 = int(min(arr.shape[0], staff_dict["y_center"] + sp * 3.5))
+                patch = arr[y0:y1, x0:x1]
+                # Dark foreground ink (note/clef/key ink < 100 vs staff lines ~140 and white paper 255)
+                return int((patch.mean(axis=2) < 95.0).sum())
+
+            # System 1 (active index 0): clef & key signature MUST be preserved
+            s0_drawn_ink = _header_ink_count(arr_drawn, active_drawn[0]["staves"][0])
+            s0_omit_ink = _header_ink_count(arr_omit, active_omit[0]["staves"][0])
+            self.assertGreater(s0_drawn_ink, 80)
+            self.assertGreater(s0_omit_ink, 80)
+
+            # System 2 (active index 1): visual clef & key signature suppressed on left margin
+            st1_d = active_drawn[1]["staves"][0]
+            st1_o = active_omit[1]["staves"][0]
+            sp1 = float(st1_d["sp"])
+            x0 = int(max(0, st1_d["x_left"] + sp1 * 0.4))
+            x1 = int(min(arr_drawn.shape[1], st1_d["x_left"] + sp1 * 3.0))
+            y0 = int(max(0, st1_d["y_center"] - sp1 * 3.5))
+            y1 = int(min(arr_drawn.shape[0], st1_d["y_center"] + sp1 * 3.5))
+            patch_d = arr_drawn[y0:y1, x0:x1]
+            patch_o = arr_omit[y0:y1, x0:x1]
+            # The two renders must differ in System 2's opening header region and have fewer dark ink pixels when omitted
+            self.assertGreater(float(np.abs(patch_d - patch_o).mean()), 2.0)
+            self.assertLess(
+                int((patch_o.mean(axis=2) < 95.0).sum()),
+                int((patch_d.mean(axis=2) < 95.0).sum()),
+            )
+
+            # Verify CLI --omit-cont-header-prob flag
+            rc = cli.main(
+                [
+                    "--input",
+                    str(xml_p),
+                    "--styles",
+                    "baroque_quill_neat",
+                    "--out-dir",
+                    td,
+                    "--page-w",
+                    "1000",
+                    "--page-h",
+                    "1300",
+                    "--historical-clean",
+                    "--omit-cont-header-prob",
+                    "1.0",
+                ]
+            )
+            self.assertEqual(rc, 0)
+            cli_json = pathlib.Path(td) / "cont_hdr__baroque_quill_neat.json"
+            self.assertTrue(cli_json.exists())
+            import json as _json
+            payload = _json.loads(cli_json.read_text(encoding="utf-8"))
+            self.assertTrue(payload["omit_cont_header"])
+            self.assertAlmostEqual(payload["omit_cont_header_prob"], 1.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

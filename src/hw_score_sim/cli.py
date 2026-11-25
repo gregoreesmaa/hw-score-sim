@@ -105,6 +105,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Curated historical manuscript mode: quarantine broken/cartoonish styles & modern clutter, enforce solid noteheads, <=5 deg shear, warm pre-ruled rastrum staves, and 5-8 bars/system",
     )
     parser.add_argument(
+        "--omit-cont-header-prob",
+        type=float,
+        default=None,
+        help="Probability [0.0..1.0] of omitting redundant opening clef & key signature on Systems 2+ when unchanged from System 0 (default: 0.35 with --historical-clean, else 0.0)",
+    )
+    parser.add_argument(
         "--list-styles",
         action="store_true",
         help="Print all registered handwritten style names and exit",
@@ -141,6 +147,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 export_train_dir=args.export_train_dir,
                 clean_paper=args.clean_paper,
                 historical_clean=args.historical_clean,
+                omit_cont_header_prob=args.omit_cont_header_prob,
             )
         except KeyError:
             all_known = styles.list_styles()

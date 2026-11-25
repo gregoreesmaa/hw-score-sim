@@ -1273,6 +1273,7 @@ def render_score_handwritten(
     clean_paper: bool = False,
     max_parts: int = 6,
     historical_clean: bool = False,
+    omit_cont_header_prob: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Render a MusicXML / MuseScore file in the given handwritten style.
 
@@ -1370,6 +1371,21 @@ def render_score_handwritten(
     _draw_page_furniture(canvas, score, systems, style, np_rng)
     gt_systems: List[Dict[str, Any]] = []
 
+    # 18th/19th-century manuscript realism: optionally omit redundant opening clef & key signature
+    # on Systems 2+ (active_sys_idx >= 1) when unchanged from System 0, keeping exact GT unchanged.
+    if omit_cont_header_prob is not None:
+        eff_omit_cont_prob = float(np.clip(omit_cont_header_prob, 0.0, 1.0))
+    else:
+        eff_omit_cont_prob = float(
+            np.clip(style.get("omit_cont_header_prob", 0.35 if eff_hist_clean else 0.0), 0.0, 1.0)
+        )
+    omit_cont_header_active = bool(
+        eff_omit_cont_prob > 0.0
+        and float(np.random.default_rng(int(seed) ^ 0x4F6D6974).random()) < eff_omit_cont_prob
+    )
+    sys0_part_header: Dict[int, Tuple[str, int]] = {}
+    active_sys_idx = 0
+
     for sys_lay in systems:
         sys_gt_staves: List[Dict[str, Any]] = []
         staff_curves: List[Tuple[Callable[[Any, int], Any], List[List[float]], float]] = []
@@ -1441,6 +1457,9 @@ def render_score_handwritten(
         if sys_lay.is_blank_prerule:
             continue
 
+        cur_active_sys_idx = active_sys_idx
+        active_sys_idx += 1
+
         # Draw system-left connecting barline & grand-staff braces
         if len(sys_lay.staves) >= 2:
             top_st = sys_lay.staves[0]
@@ -1483,6 +1502,10 @@ def render_score_handwritten(
             part = score.parts[st_lay.part_index]
             y_fn_2, _, sp = staff_curves[s_idx]
 
+            if cur_active_sys_idx == 0 and sys_lay.measure_start < len(part.measures):
+                _m0 = part.measures[sys_lay.measure_start]
+                sys0_part_header[st_lay.part_index] = (_m0.clef, int(_m0.key_fifths))
+
             def y_mid(x_val: float, _fn: Callable[[Any, int], Any] = y_fn_2) -> float:
                 return float(_fn(x_val, 0))
 
@@ -1513,8 +1536,19 @@ def render_score_handwritten(
                     )
                     cursor_x += sp * 1.1
 
+                sys0_hdr = sys0_part_header.get(st_lay.part_index)
+                omit_cont_header_here = (
+                    omit_cont_header_active
+                    and cur_active_sys_idx >= 1
+                    and rel_m == 0
+                    and not meas.clef_change
+                    and not meas.key_change
+                    and sys0_hdr is not None
+                    and (meas.clef, int(meas.key_fifths)) == sys0_hdr
+                )
+
                 # Clef at start of system or on clef change
-                if rel_m == 0 or meas.clef_change:
+                if (rel_m == 0 or meas.clef_change) and not omit_cont_header_here:
                     clef_x = cursor_x + sp * 0.9
                     _draw_clef_with_octave(
                         canvas=canvas,
@@ -1530,7 +1564,7 @@ def render_score_handwritten(
                     cursor_x += sp * 2.5
 
                 # Key signature at start of system or on key change
-                if (rel_m == 0 or meas.key_change) and meas.key_fifths != 0:
+                if (rel_m == 0 or meas.key_change) and meas.key_fifths != 0 and not omit_cont_header_here:
                     end_x = glyph_variants.draw_key_sig(
                         canvas=canvas,
                         x_start=cursor_x,
@@ -2287,6 +2321,8 @@ def render_score_handwritten(
         "page_h": page_h,
         "clean_paper": bool(clean_paper),
         "historical_clean": bool(eff_hist_clean),
+        "omit_cont_header_prob": float(eff_omit_cont_prob),
+        "omit_cont_header": bool(omit_cont_header_active),
         "systems": gt_systems,
     }
     if manuscript_marks_log:
