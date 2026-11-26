@@ -15,7 +15,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from . import renderer, stroke_engine, structural_glyphs as sg, styles
+from . import catalog, renderer, stroke_engine, structural_glyphs as sg, styles
 
 
 SHOWCASE_MUSICXML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -105,6 +105,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Curated historical manuscript mode: quarantine broken/cartoonish styles & modern clutter, enforce solid noteheads, <=5 deg shear, warm pre-ruled rastrum staves, and 5-8 bars/system",
     )
     parser.add_argument(
+        "--era",
+        choices=("all", "historical"),
+        default="all",
+        help="Era preset: 'historical' filters out modern jazz/film styles and boosts 18th/19th-century fidelity (verso bleed 0.28, in-bar cross-outs, aged iron-gall/sepia ink variance)",
+    )
+    parser.add_argument(
         "--omit-cont-header-prob",
         type=float,
         default=None,
@@ -117,8 +123,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    historical_era = args.era == "historical"
+
     if args.list_styles:
-        for name in styles.list_styles():
+        names = catalog.list_historical_styles() if historical_era else styles.list_styles()
+        for name in names:
             print(name)
         return 0
 
@@ -126,9 +135,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("--input is required unless --list-styles is specified")
 
     if args.styles.strip().lower() == "all":
-        style_names = styles.list_styles()
+        style_names = catalog.list_historical_styles() if historical_era else styles.list_styles()
     else:
-        style_names = [s.strip() for s in args.styles.split(",") if s.strip()]
+        raw_styles = [s.strip() for s in args.styles.split(",") if s.strip()]
+        if historical_era and args.styles == "beethoven_hurried_autograph,debussy_pencil_sketch,student_ballpoint_blue":
+            style_names = ["beethoven_hurried_autograph", "baroque_quill_neat", "romantic_copyist_oblong"]
+        elif historical_era:
+            allowed_hist = set(catalog.list_historical_styles())
+            filtered = [s for s in raw_styles if s in allowed_hist]
+            style_names = filtered if filtered else raw_styles
+        else:
+            style_names = raw_styles
 
     in_path = pathlib.Path(args.input)
     out_dir = pathlib.Path(args.out_dir)
@@ -147,6 +164,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 export_train_dir=args.export_train_dir,
                 clean_paper=args.clean_paper,
                 historical_clean=args.historical_clean,
+                historical_era=historical_era,
                 omit_cont_header_prob=args.omit_cont_header_prob,
             )
         except KeyError:

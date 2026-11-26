@@ -226,7 +226,11 @@ def make_manuscript_paper(
         pil_g = Image.fromarray(ghost_u8, mode="L").filter(ImageFilter.BoxBlur(1.2))
         ghost = np.asarray(pil_g.resize((int(width), int(height)), Image.BILINEAR), dtype=np.float32) * np.float32(1.0 / 255.0)
         verso_rgb = np.clip(ink_rgb * 0.65 + np.array([0.24, 0.20, 0.15], dtype=np.float32), 0.0, 1.0)
-        alpha = (np.clip(ghost, 0.0, 1.0) * (min(bleed_through, 0.25) * 0.28))[:, :, None]
+        if bool(style.get("historical_era", False)):
+            eff_alpha = min(bleed_through, 0.28)
+        else:
+            eff_alpha = min(bleed_through, 0.25) * 0.28
+        alpha = (np.clip(ghost, 0.0, 1.0) * eff_alpha)[:, :, None]
         img = img * (1.0 - alpha) + verso_rgb[None, None, :] * alpha
 
     # 5. Optional faint eraser smudges

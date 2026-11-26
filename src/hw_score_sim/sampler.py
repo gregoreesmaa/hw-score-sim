@@ -21,7 +21,7 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
-from .catalog import filter_styles
+from .catalog import filter_styles, list_historical_styles
 from .styles import (
     PAPER_TYPES,
     _NUMERIC_CLAMP_BOUNDS,
@@ -459,6 +459,8 @@ class ScribeSampler:
         ink: Optional[str] = None,
         paper: Optional[str] = None,
         historical_clean: bool = False,
+        era: Optional[str] = None,
+        historical_era: bool = False,
     ) -> None:
         if preset not in DIFFICULTY_PRESETS:
             valid = ", ".join(DIFFICULTY_ORDER)
@@ -471,6 +473,8 @@ class ScribeSampler:
         if paper is not None and paper not in PAPER_PRESETS:
             valid = ", ".join(PAPER_PRESETS.keys())
             raise KeyError(f"Unknown paper preset {paper!r}. Valid presets: {valid}")
+        if era is not None and era.strip().lower() not in ("all", "historical"):
+            raise ValueError(f"era must be 'all' or 'historical', got {era!r}")
 
         self.preset: str = preset
         self.master_seed: int = int(master_seed)
@@ -481,6 +485,8 @@ class ScribeSampler:
         self.ink: Optional[str] = ink
         self.paper: Optional[str] = paper
         self.historical_clean: bool = bool(historical_clean)
+        self.era: str = era.strip().lower() if era is not None else ("historical" if historical_era else "all")
+        self.historical_era: bool = bool(historical_era or self.era == "historical")
 
     def set_preset(self, preset: str) -> ScribeSampler:
         """Switch to a named difficulty preset and clear any continuous difficulty override."""
@@ -513,6 +519,9 @@ class ScribeSampler:
     def _resolve_pool(self, legibility_tiers: tuple[int, ...]) -> list[str]:
         if self._explicit_pool is not None:
             return list(self._explicit_pool)
+        if self.historical_era:
+            pool = list_historical_styles(legibility=legibility_tiers)
+            return pool if pool else list_historical_styles()
         pool = filter_styles(legibility=legibility_tiers)
         return pool if pool else list_styles()
 
@@ -552,6 +561,10 @@ class ScribeSampler:
             from .profile_resolver import sanitize_historical_clean_style
 
             resolved = sanitize_historical_clean_style(resolved)
+        if self.historical_era:
+            from .profile_resolver import apply_historical_era_profile
+
+            resolved = apply_historical_era_profile(resolved)
         return resolved, render_seed
 
 

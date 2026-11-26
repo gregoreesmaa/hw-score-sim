@@ -64,7 +64,15 @@ from .structural_glyphs import (
     CLEF_ARCHETYPES,
     KEYSIG_ARCHETYPES,
 )
+from .catalog import (
+    ERA_PRESETS,
+    HISTORICAL_ERAS,
+    HISTORICAL_FORBIDDEN_MEDIA,
+    HISTORICAL_IMPLEMENTS,
+    list_historical_styles,
+)
 from .profile_resolver import (
+    apply_historical_era_profile,
     resolve_page_and_expressive_profile,
     sanitize_historical_clean_style,
 )
@@ -161,6 +169,12 @@ __all__ = [
     "resolve_ductus_param",
     "resolve_page_and_expressive_profile",
     "sanitize_historical_clean_style",
+    "apply_historical_era_profile",
+    "HISTORICAL_ERAS",
+    "HISTORICAL_IMPLEMENTS",
+    "HISTORICAL_FORBIDDEN_MEDIA",
+    "ERA_PRESETS",
+    "list_historical_styles",
     # Data structures
     "ParsedScore",
     "PartData",

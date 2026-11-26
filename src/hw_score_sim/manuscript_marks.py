@@ -370,7 +370,11 @@ def apply_pre_ink_manuscript_layers(
         xi = np.linspace(0, sw - 1, w).astype(np.int32)
         full_mask = mask[yi[:, None], xi[None, :]]
         tooth = canvas.get_tooth_patch(0, 0, w, h)
-        alpha = np.clip(full_mask * (0.65 + 0.55 * tooth) * (verso_strength * 0.14), 0.0, 0.14)
+        if bool(style.get("historical_era", False)):
+            verso_cap = min(verso_strength, 0.28)
+            alpha = np.clip(full_mask * (0.65 + 0.55 * tooth) * verso_cap, 0.0, 0.28)
+        else:
+            alpha = np.clip(full_mask * (0.65 + 0.55 * tooth) * (verso_strength * 0.14), 0.0, 0.14)
         base_ink = np.asarray(style.get("ink_rgb", (0.18, 0.14, 0.10)), dtype=np.float32)
         verso_rgb = np.clip(base_ink * 0.65 + np.array([0.24, 0.20, 0.15], dtype=np.float32), 0.0, 1.0)
         canvas.composite_patch(0, 0, w, h, alpha, verso_rgb)
@@ -501,6 +505,116 @@ def draw_cancelled_false_start(
         bbox_xyxy=(x0, y_center - 1.8 * sp, x1, y_center + 1.8 * sp),
         tool="scribe_ink", color_rgb=ink_rgb,
     )
+
+
+def draw_in_bar_crossout(
+    canvas: StrokeCanvas,
+    active_systems: Sequence[Any],
+    guard: SafeZoneGuard,
+    style: Dict[str, Any],
+    rng: np.random.Generator,
+    marks_out: List[Dict[str, Any]],
+) -> bool:
+    """Draw an OMR-safe composer ink correction / scribbled-out false start adjacent to a bar.
+
+    Places a compact cancelled note cluster (1-3 dummy notes + dense diagonal/scribble
+    cross-out in aged scribe ink) inside a verified safe zone immediately above, below,
+    or in the right-margin tail of an active barline so GT noteheads are never corrupted.
+    """
+    if not active_systems:
+        return False
+
+    ink_rgb = style.get("ink_rgb", (0.18, 0.13, 0.09))
+    cancel_style = str(
+        rng.choice(["tight_scribble_hatch", "double_diagonal_slash", "heavy_x_cross", "wavy_loop_cancel"])
+    )
+
+    candidates: List[Tuple[float, float, float, float, int, Optional[int]]] = []
+    for sys_lay in active_systems:
+        if not sys_lay.staves:
+            continue
+        top_st = sys_lay.staves[0]
+        bot_st = sys_lay.staves[-1]
+        sp = float(top_st.sp)
+        span_w = sp * float(rng.uniform(3.2, 5.2))
+        # Candidate 1: right-margin false-start tail past last barline
+        rx0 = float(sys_lay.x_right) + sp * 0.6
+        if rx0 + span_w < canvas.width - 8.0:
+            candidates.append((rx0, float(top_st.y_center), span_w, sp, sys_lay.system_index, None))
+        # Candidate 2: above top staff / below bottom staff aligned to an interior bar
+        for b_idx, (bx0, bx1) in enumerate(sys_lay.bar_x_bounds):
+            bw = bx1 - bx0
+            if bw >= span_w * 0.8:
+                cx0 = bx0 + max(0.0, (bw - span_w) * 0.5)
+                candidates.append(
+                    (cx0, float(top_st.y_center) - 4.15 * sp, span_w, sp * 0.68, sys_lay.system_index, sys_lay.measure_start + b_idx)
+                )
+                candidates.append(
+                    (cx0, float(bot_st.y_center) + 4.15 * sp, span_w, sp * 0.68, sys_lay.system_index, sys_lay.measure_start + b_idx)
+                )
+    # Candidate 3: inter-system midpoint between consecutive active systems (always centered in safe gap)
+    for idx_s in range(len(active_systems) - 1):
+        s_a, s_b = active_systems[idx_s], active_systems[idx_s + 1]
+        if not s_a.staves or not s_b.staves:
+            continue
+        sp_a = float(s_a.staves[-1].sp)
+        y_mid = 0.5 * (float(s_a.staves[-1].y_center) + float(s_b.staves[0].y_center))
+        span_w = sp_a * float(rng.uniform(3.0, 4.8))
+        cx0 = float(s_a.x_left) + float(rng.uniform(0.15, 0.70)) * max(sp_a * 4.0, float(s_a.x_right - s_a.x_left) - span_w)
+        candidates.append((cx0, y_mid, span_w, sp_a * 0.65, s_a.system_index, None))
+
+    if not candidates:
+        return False
+
+    order = rng.permutation(len(candidates))
+    for idx in order:
+        x0, yc, span_w, sp_loc, s_idx, m_idx = candidates[int(idx)]
+        bbox = (x0, yc - 1.45 * sp_loc, x0 + span_w, yc + 1.45 * sp_loc)
+        if not guard.is_safe(*bbox):
+            continue
+        lw = max(0.95, sp_loc * 0.14)
+        x1 = x0 + span_w
+        # Draw 2-3 tiny false-start ink blobs + stems
+        n_dummy = int(rng.integers(2, 4))
+        for nx in np.linspace(x0 + sp_loc * 0.45, x1 - sp_loc * 0.45, n_dummy):
+            ny = yc + float(rng.uniform(-0.8, 0.8)) * sp_loc
+            draw_filled_blob(canvas, float(nx), ny, sp_loc * 0.40, sp_loc * 0.28, -22.0, ink_rgb, style)
+            stem = np.array([[nx + sp_loc * 0.30, ny], [nx + sp_loc * 0.30, ny - 1.9 * sp_loc]], dtype=np.float64)
+            draw_calligraphic_polyline(canvas, stem, ink_rgb, lw * 0.85, style, kind="stem")
+
+        # Dense ink cross-out strokes over the false start
+        if cancel_style == "tight_scribble_hatch":
+            n_zags = int(rng.integers(10, 16))
+            zx = np.linspace(x0, x1, n_zags)
+            zy = yc + np.where(np.arange(n_zags) % 2 == 0, -1.25 * sp_loc, 1.25 * sp_loc) + rng.normal(0.0, 0.18 * sp_loc, n_zags)
+            draw_calligraphic_polyline(canvas, np.column_stack((zx, zy)), ink_rgb, lw * 1.4, style, kind="annotation")
+        elif cancel_style == "double_diagonal_slash":
+            for off in (-0.30 * sp_loc, 0.30 * sp_loc):
+                pts = np.array([[x0 + off, yc + 1.3 * sp_loc], [x1 + off, yc - 1.3 * sp_loc]], dtype=np.float64)
+                draw_calligraphic_polyline(canvas, pts, ink_rgb, lw * 1.45, style, kind="annotation")
+        elif cancel_style == "heavy_x_cross":
+            draw_calligraphic_polyline(canvas, np.array([[x0, yc - 1.3 * sp_loc], [x1, yc + 1.3 * sp_loc]], dtype=np.float64), ink_rgb, lw * 1.6, style, kind="annotation")
+            draw_calligraphic_polyline(canvas, np.array([[x0, yc + 1.3 * sp_loc], [x1, yc - 1.3 * sp_loc]], dtype=np.float64), ink_rgb, lw * 1.6, style, kind="annotation")
+        else:
+            t = np.linspace(0.0, 1.0, 56)
+            wx = x0 + t * span_w + 0.40 * sp_loc * np.sin(2.0 * math.pi * 5.0 * t)
+            wy = yc + 1.05 * sp_loc * np.cos(2.0 * math.pi * 5.0 * t)
+            draw_calligraphic_polyline(canvas, np.column_stack((wx, wy)), ink_rgb, lw * 1.3, style, kind="annotation")
+
+        guard.reserve(*bbox)
+        _log_mark(
+            marks_out,
+            layer="scratch_out",
+            kind="in_bar_crossout",
+            substyle=cancel_style,
+            bbox_xyxy=bbox,
+            tool="scribe_ink",
+            color_rgb=ink_rgb,
+            system_index=s_idx,
+            measure_index=m_idx,
+        )
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -997,6 +1111,11 @@ def apply_post_notation_manuscript_marks(
             if cand_y + 2.5 * avg_sp < canvas.height - 16.0 and guard.is_safe(*bbox):
                 draw_cancelled_false_start(canvas, cx0, cand_y, span_w, avg_sp, cancel_style, style, rng, marks_out)
                 guard.reserve(*bbox)
+
+    # Layer 2b: In-bar / bar-adjacent composer cross-outs & ink corrections (OMR-safe)
+    in_bar_prob = float(np.clip(style.get("in_bar_crossout_prob", 0.0), 0.0, 1.0))
+    if in_bar_prob > 0.0 and float(rng.random()) < in_bar_prob and active_systems:
+        draw_in_bar_crossout(canvas, active_systems, guard, style, rng, marks_out)
 
     # Layer 6: Caret ^ Insertions & Marginal Callouts
     caret_prob = float(np.clip(style.get("caret_callout_prob", 0.0), 0.0, 1.0))

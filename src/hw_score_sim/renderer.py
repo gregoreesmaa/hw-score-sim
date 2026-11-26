@@ -1273,6 +1273,7 @@ def render_score_handwritten(
     clean_paper: bool = False,
     max_parts: int = 6,
     historical_clean: bool = False,
+    historical_era: bool = False,
     omit_cont_header_prob: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Render a MusicXML / MuseScore file in the given handwritten style.
@@ -1291,16 +1292,22 @@ def render_score_handwritten(
     raw_style = styles.get_style(style_name) if hasattr(styles, "get_style") else styles.SCRIBE_STYLES[style_name]
     display_style_name = style_name if isinstance(style_name, str) else str(raw_style.get("name", "custom_style"))
     eff_hist_clean = bool(historical_clean or raw_style.get("historical_clean", False))
+    eff_hist_era = bool(historical_era or raw_style.get("historical_era", False))
     # Merge deterministic v0.3.0 Layers 1–4 profile (explicit keys in raw_style always win)
     style = dict(
         profile_resolver.resolve_page_and_expressive_profile(
-            raw_style, clean_paper=clean_paper, historical_clean=eff_hist_clean
+            raw_style,
+            clean_paper=clean_paper,
+            historical_clean=eff_hist_clean,
+            historical_era=eff_hist_era,
         )
     )
     style.update(raw_style)
     if eff_hist_clean:
         style = profile_resolver.sanitize_historical_clean_style(style, clean_paper=clean_paper)
-    elif clean_paper:
+    if eff_hist_era:
+        style = profile_resolver.apply_historical_era_profile(style, clean_paper=clean_paper)
+    elif clean_paper and not eff_hist_clean:
         style["paper_binding_mode"] = "none"
         style["paper_background_grid"] = "none"
         style["paper_border_mode"] = "none"
@@ -2321,6 +2328,7 @@ def render_score_handwritten(
         "page_h": page_h,
         "clean_paper": bool(clean_paper),
         "historical_clean": bool(eff_hist_clean),
+        "historical_era": bool(eff_hist_era),
         "omit_cont_header_prob": float(eff_omit_cont_prob),
         "omit_cont_header": bool(omit_cont_header_active),
         "systems": gt_systems,

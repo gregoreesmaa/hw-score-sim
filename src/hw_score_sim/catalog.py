@@ -38,6 +38,30 @@ CANONICAL_ERAS: tuple[str, ...] = (
     "contemporary",
 )
 
+HISTORICAL_ERAS: tuple[str, ...] = (
+    "renaissance",
+    "baroque",
+    "classical",
+    "romantic",
+    "impressionist",
+)
+
+HISTORICAL_IMPLEMENTS: tuple[str, ...] = (
+    "quill",
+    "steel_nib",
+    "fountain_pen",
+    "graphite_pencil",
+)
+
+HISTORICAL_FORBIDDEN_MEDIA: tuple[str, ...] = (
+    "jazz_lead_sheet",
+    "film_studio",
+)
+
+ERA_PRESETS: dict[str, tuple[str, ...]] = {
+    "historical": HISTORICAL_ERAS,
+}
+
 CANONICAL_MEDIA: tuple[str, ...] = (
     "autograph_sketch",
     "fair_copy",
@@ -640,6 +664,9 @@ def _normalize_enum_filter(
     valid_set = set(valid_values)
     for item in items:
         s = str(item).strip().lower()
+        if field_name == "era" and s in ERA_PRESETS:
+            normalized.update(ERA_PRESETS[s])
+            continue
         if s not in valid_set:
             raise ValueError(f"Unknown {field_name} {item!r}; expected one of {valid_values}")
         normalized.add(s)
@@ -744,8 +771,30 @@ def filter_styles(
     return matched
 
 
+def list_historical_styles(
+    *,
+    legibility: Optional[Union[int, str, Iterable[Union[int, str]]]] = None,
+) -> list[str]:
+    """Return all registered 18th/19th/early-20th-century historical manuscript styles.
+
+    Filters strictly to ``HISTORICAL_ERAS`` and ``HISTORICAL_IMPLEMENTS``, and
+    excludes modern ``jazz_lead_sheet`` and ``film_studio`` media.
+    """
+    allowed_media = tuple(m for m in CANONICAL_MEDIA if m not in HISTORICAL_FORBIDDEN_MEDIA)
+    return filter_styles(
+        era=HISTORICAL_ERAS,
+        medium=allowed_media,
+        implement=HISTORICAL_IMPLEMENTS,
+        legibility=legibility,
+    )
+
+
 __all__ = [
     "CANONICAL_ERAS",
+    "HISTORICAL_ERAS",
+    "HISTORICAL_IMPLEMENTS",
+    "HISTORICAL_FORBIDDEN_MEDIA",
+    "ERA_PRESETS",
     "CANONICAL_MEDIA",
     "CANONICAL_IMPLEMENTS",
     "LEGIBILITY_LABELS",
@@ -757,4 +806,5 @@ __all__ = [
     "score_legibility",
     "describe_style",
     "filter_styles",
+    "list_historical_styles",
 ]

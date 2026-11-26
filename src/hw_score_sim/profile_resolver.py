@@ -287,6 +287,84 @@ def sanitize_historical_clean_style(
     return out
 
 
+def apply_historical_era_profile(
+    style: Dict[str, Any],
+    *,
+    clean_paper: bool = False,
+) -> Dict[str, Any]:
+    """Enforce 18th/19th-century historical manuscript fidelity (Iter 13 / v07 preset).
+
+    Filters out modern jazz/film clutter and modern stationery, boosts mirrored verso
+    bleed-through to ``0.28``, enables off-GT and in-bar cross-outs / ink corrections,
+    and enriches aged iron-gall / oxidized sepia ink variance.
+
+    Returns a new style dict without mutating ``style``.
+    """
+    out = dict(style or {})
+    name = str(out.get("name", "unnamed"))
+    era = str(out.get("era", "classical"))
+
+    def _enforce(key: str, allowed: Sequence[str], domain: str) -> None:
+        val = out.get(key)
+        if val not in allowed:
+            out[key] = _deterministic_pick(domain, name, era, allowed)
+
+    # 1. Strip modern jazz/film personas, chord symbols, timecodes, spiral/ozalid stationery
+    _enforce("annotation_persona", HISTORICAL_CLEAN_PERSONAS, "he_pers")
+    out["chord_symbols_prob"] = 0.0
+    out["chord_symbol_style"] = "none"
+    _enforce("page_furniture_mode", HISTORICAL_CLEAN_FURNITURE, "he_furn")
+    _enforce("measure_number_style", HISTORICAL_CLEAN_MEASURE_NUMBERS, "he_mnum")
+    _enforce("paper_type", HISTORICAL_CLEAN_PAPER_TYPES, "he_paper")
+    _enforce("paper_binding_mode", HISTORICAL_CLEAN_BINDINGS, "he_bind")
+    _enforce("paper_background_grid", HISTORICAL_CLEAN_GRIDS, "he_grid")
+    out["paper_border_mode"] = "none"
+
+    # 2. Aged iron-gall / oxidized sepia ink palette & natural dip-pen ink variance
+    # Blend modern/saturated inks into authentic 18th/19th-century iron-gall / sepia tones
+    u_ink = _u01("he_ink_tone", name, era)
+    # Interpolate between dark fresh iron-gall (0.13, 0.10, 0.08) and oxidized sepia (0.33, 0.22, 0.14)
+    target_gall = np.array(
+        [
+            0.13 + 0.20 * u_ink,
+            0.10 + 0.12 * u_ink,
+            0.08 + 0.06 * u_ink,
+        ],
+        dtype=np.float64,
+    )
+    ink = np.asarray(out.get("ink_rgb", target_gall), dtype=np.float64)
+    # Pull any bright/blue/red/neutral-black modern ink toward authentic warm iron-gall/sepia
+    if float(np.max(ink) - np.min(ink)) > 0.16 or ink[2] > ink[0] + 0.02 or float(np.mean(ink)) > 0.36:
+        ink = 0.30 * ink + 0.70 * target_gall
+    else:
+        ink = 0.55 * ink + 0.45 * target_gall
+    ink = np.clip(ink, 0.05, 0.36)
+    out["ink_rgb"] = tuple(round(float(c), 4) for c in ink)
+
+    rastrum_warm = np.array([0.56, 0.47, 0.37], dtype=np.float64)
+    staff_ink = np.clip(0.30 * ink + 0.70 * rastrum_warm, 0.34, 0.64)
+    out["staff_ink_rgb"] = tuple(round(float(c), 4) for c in staff_ink)
+
+    out["ink_var"] = float(np.clip(max(float(out.get("ink_var", 0.22)), 0.18), 0.18, 0.34))
+    out["ink_pooling"] = float(np.clip(max(float(out.get("ink_pooling", 0.26)), 0.20), 0.20, 0.42))
+    out["ink_feather"] = float(np.clip(max(float(out.get("ink_feather", 0.16)), 0.12), 0.12, 0.28))
+
+    # 3. In-bar cross-outs / ink corrections & off-GT cancellations
+    out["scratch_out_prob"] = float(np.clip(max(float(out.get("scratch_out_prob", 0.0)), 0.25), 0.25, 1.0))
+    out["in_bar_crossout_prob"] = float(np.clip(max(float(out.get("in_bar_crossout_prob", 0.0)), 0.25), 0.25, 1.0))
+
+    # 4. Stronger mirrored verso bleed-through (0.28) on historical thin rag paper
+    if clean_paper:
+        out["bleed_through"] = 0.0
+        out["verso_bleed_strength"] = 0.0
+    else:
+        out["bleed_through"] = float(np.clip(max(float(out.get("bleed_through", 0.0)), 0.28), 0.28, 0.35))
+        out["verso_bleed_strength"] = float(np.clip(max(float(out.get("verso_bleed_strength", 0.0)), 0.28), 0.28, 0.35))
+
+    out["historical_era"] = True
+    return out
+
+
 def _u01(domain: str, name: str, era: str) -> float:
     digest = hashlib.sha256(f"v03:{domain}:{name}:{era}".encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") / float(1 << 64)
@@ -314,6 +392,7 @@ def resolve_page_and_expressive_profile(
     *,
     clean_paper: bool = False,
     historical_clean: bool = False,
+    historical_era: bool = False,
 ) -> Dict[str, Any]:
     """Derive a complete, deterministic Layers 1–4 profile for any style dict.
 
@@ -616,5 +695,7 @@ def resolve_page_and_expressive_profile(
 
     if historical_clean:
         resolved = sanitize_historical_clean_style(resolved, clean_paper=clean_paper)
+    if historical_era:
+        resolved = apply_historical_era_profile(resolved, clean_paper=clean_paper)
 
     return resolved
