@@ -14,7 +14,7 @@ Explicit keys already present in ``style`` ALWAYS win verbatim. Zero mutation of
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -365,6 +365,143 @@ def apply_historical_era_profile(
     return out
 
 
+SEPIA_MODES: Tuple[str, ...] = ("none", "aged", "faint_thin")
+
+
+def apply_sepia_archival_profile(
+    style: Dict[str, Any],
+    *,
+    mode: str = "aged",
+    chroma: Optional[float] = None,
+    clean_paper: bool = False,
+) -> Dict[str, Any]:
+    """Apply deterministic aged-sepia paper tint & warm brown iron-gall ink color.
+
+    Targets real historical manuscript chroma (``0.08–0.22``) vs grayscale synthetic pages.
+    Modes:
+      - ``"aged"``: warm sepia rag paper (``chroma 0.08–0.22``) + dark-to-medium warm
+        brown iron-gall ink.
+      - ``"faint_thin"``: aged sepia paper (``chroma 0.10–0.22``) + faded warm brown
+        iron-gall ink with thin-stroke nib physics (targeting low-contrast thin-stroke
+        manuscripts such as ``hensel-im-herbste`` / ``mendelssohn-herbstlied``).
+
+    Returns a new style dict without mutating ``style``.
+    """
+    norm_mode = str(mode or "none").strip().lower()
+    if norm_mode not in SEPIA_MODES:
+        raise ValueError(f"Unknown sepia_mode {mode!r}. Valid modes: {', '.join(SEPIA_MODES)}")
+    out = dict(style or {})
+    if norm_mode == "none":
+        return out
+
+    name = str(out.get("name", "unnamed"))
+    era = str(out.get("era", "classical"))
+
+    u_c = _u01("sepia_chroma", name, era)
+    u_lum = _u01("sepia_lum", name, era)
+    u_ink = _u01("sepia_ink", name, era)
+
+    if chroma is not None:
+        target_chroma = float(np.clip(chroma, 0.08, 0.22))
+    elif norm_mode == "faint_thin":
+        target_chroma = float(0.10 + 0.12 * u_c)
+    else:
+        target_chroma = float(0.08 + 0.14 * u_c)
+
+    # Warm sepia paper RGB: R > G > B with R - B == target_chroma
+    r_p = float(0.88 + 0.06 * u_lum)
+    b_p = float(np.clip(r_p - target_chroma, 0.58, 0.88))
+    r_p = float(np.clip(b_p + target_chroma, 0.72, 0.96))
+    g_p = float(b_p + 0.62 * (r_p - b_p))
+    out["paper_rgb"] = (round(r_p, 4), round(g_p, 4), round(b_p, 4))
+    out["sepia_mode"] = norm_mode
+    out["sepia_paper_chroma"] = round(float(r_p - b_p), 4)
+
+    if not clean_paper:
+        out["paper_type"] = "aged_rag" if target_chroma >= 0.14 else "cream_manuscript"
+        out["paper_grain"] = float(np.clip(max(float(out.get("paper_grain", 0.08)), 0.06), 0.05, 0.13))
+        out["paper_mottle"] = float(np.clip(max(float(out.get("paper_mottle", 0.11)), 0.08), 0.06, 0.18))
+
+    if norm_mode == "faint_thin":
+        # Faded warm brown iron-gall ink & delicate thin-stroke nib physics
+        ink_r = float(0.38 + 0.15 * u_ink)
+        ink_g = float(0.27 + 0.13 * u_ink)
+        ink_b = float(0.17 + 0.10 * u_ink)
+        out["ink_rgb"] = (round(ink_r, 4), round(ink_g, 4), round(ink_b, 4))
+        staff_r = float(np.clip(ink_r + 0.17, 0.54, 0.70))
+        staff_g = float(np.clip(ink_g + 0.18, 0.45, 0.61))
+        staff_b = float(np.clip(ink_b + 0.17, 0.34, 0.49))
+        out["staff_ink_rgb"] = (round(staff_r, 4), round(staff_g, 4), round(staff_b, 4))
+        out["stroke_scale"] = round(float(0.58 + 0.20 * _u01("sepia_thin_w", name, era)), 4)
+        out["nib_min_ratio"] = round(float(0.18 + 0.12 * _u01("sepia_thin_nib", name, era)), 4)
+        out["stroke_opacity"] = round(float(0.66 + 0.16 * _u01("sepia_thin_op", name, era)), 4)
+        out["ink_dropout"] = round(float(0.14 + 0.12 * _u01("sepia_thin_drop", name, era)), 4)
+        out["ink_var"] = round(float(0.20 + 0.12 * _u01("sepia_thin_var", name, era)), 4)
+        out["staff_line_width_ratio"] = round(float(0.052 + 0.016 * _u01("sepia_thin_slw", name, era)), 4)
+    else:
+        # Warm dark-to-medium iron-gall brown ink (R > G > B)
+        ink_r = float(0.17 + 0.17 * u_ink)
+        ink_g = float(0.12 + 0.12 * u_ink)
+        ink_b = float(0.08 + 0.07 * u_ink)
+        out["ink_rgb"] = (round(ink_r, 4), round(ink_g, 4), round(ink_b, 4))
+        staff_r = float(np.clip(0.32 * ink_r + 0.68 * 0.58, 0.40, 0.66))
+        staff_g = float(np.clip(0.32 * ink_g + 0.68 * 0.49, 0.33, 0.56))
+        staff_b = float(np.clip(0.32 * ink_b + 0.68 * 0.38, 0.25, 0.46))
+        out["staff_ink_rgb"] = (round(staff_r, 4), round(staff_g, 4), round(staff_b, 4))
+
+    return out
+
+
+def apply_dense_landscape_profile(
+    style: Dict[str, Any],
+    *,
+    target_staves: int = 12,
+    scanner_margin_frac: Optional[float] = None,
+    clean_paper: bool = False,
+) -> Dict[str, Any]:
+    """Configure dense 12-staff landscape archival styling with zero extra inter-system gap.
+
+    Targets British Library oblong quartet manuscripts (e.g. Mozart K.387/421/464,
+    Schubert D.810) where 12 evenly pre-ruled staves fill the landscape sheet and
+    ``<sys>`` boundaries must be inferred from left-margin system braces alone.
+
+    Returns a new style dict without mutating ``style``.
+    """
+    out = dict(style or {})
+    name = str(out.get("name", "unnamed"))
+    era = str(out.get("era", "classical"))
+
+    out["dense_landscape"] = True
+    out["zero_inter_system_gap"] = True
+    out["target_staves_per_page"] = int(np.clip(target_staves, 4, 16))
+    out["dense_inter_gap_ratio"] = round(float(0.95 + 0.15 * _u01("dl_gap", name, era)), 4)
+    out["dense_fill_blank_staves"] = bool(out.get("dense_fill_blank_staves", True))
+    out["force_system_brace"] = True
+    out["barline_span_mode"] = "full_system_connected"
+
+    # Compact archival margins with left clearance for system braces
+    out["page_furniture_mode"] = "none"
+    out["margin_top_frac"] = round(float(0.048 + 0.014 * _u01("dl_mt", name, era)), 4)
+    out["margin_bottom_frac"] = round(float(0.048 + 0.014 * _u01("dl_mb", name, era)), 4)
+    out["margin_left_frac"] = round(float(0.068 + 0.014 * _u01("dl_ml", name, era)), 4)
+    out["margin_right_frac"] = round(float(0.046 + 0.014 * _u01("dl_mr", name, era)), 4)
+    out["first_system_indent_frac"] = 0.0
+    out["ragged_right_jitter_frac"] = 0.0
+    out["page_skew_drift_px"] = 0.0
+    out["final_system_short_frac"] = 1.0
+    out["paper_border_mode"] = "none"
+    out["dog_ear_prob"] = 0.0  # avoid painting corner fold over dark scanner-bed border
+
+    if clean_paper:
+        out["scanner_margin_frac"] = 0.0
+    elif scanner_margin_frac is not None:
+        out["scanner_margin_frac"] = round(float(np.clip(scanner_margin_frac, 0.0, 0.05)), 4)
+    elif "scanner_margin_frac" not in out or out["scanner_margin_frac"] is None:
+        out["scanner_margin_frac"] = round(float(0.018 + 0.016 * _u01("dl_scan", name, era)), 4)
+
+    return out
+
+
 def _u01(domain: str, name: str, era: str) -> float:
     digest = hashlib.sha256(f"v03:{domain}:{name}:{era}".encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") / float(1 << 64)
@@ -393,6 +530,10 @@ def resolve_page_and_expressive_profile(
     clean_paper: bool = False,
     historical_clean: bool = False,
     historical_era: bool = False,
+    sepia_mode: Optional[str] = None,
+    dense_landscape: bool = False,
+    verso_bleed: Optional[float] = None,
+    scanner_margin_frac: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Derive a complete, deterministic Layers 1–4 profile for any style dict.
 
@@ -697,5 +838,27 @@ def resolve_page_and_expressive_profile(
         resolved = sanitize_historical_clean_style(resolved, clean_paper=clean_paper)
     if historical_era:
         resolved = apply_historical_era_profile(resolved, clean_paper=clean_paper)
+    eff_sepia = sepia_mode if sepia_mode is not None else st.get("sepia_mode")
+    if eff_sepia is not None and str(eff_sepia).strip().lower() != "none":
+        resolved = apply_sepia_archival_profile(
+            resolved,
+            mode=str(eff_sepia),
+            chroma=st.get("sepia_paper_chroma"),
+            clean_paper=clean_paper,
+        )
+    if dense_landscape or bool(st.get("dense_landscape", False)):
+        resolved = apply_dense_landscape_profile(
+            resolved,
+            target_staves=int(st.get("target_staves_per_page", 12)),
+            scanner_margin_frac=scanner_margin_frac if scanner_margin_frac is not None else st.get("scanner_margin_frac"),
+            clean_paper=clean_paper,
+        )
+    if verso_bleed is not None and not clean_paper:
+        vb = float(np.clip(verso_bleed, 0.0, 0.30))
+        resolved["verso_bleed_alpha"] = vb
+        if vb > 0.0:
+            resolved["verso_bleed_invert"] = True
+    if scanner_margin_frac is not None and not clean_paper:
+        resolved["scanner_margin_frac"] = round(float(np.clip(scanner_margin_frac, 0.0, 0.05)), 4)
 
     return resolved

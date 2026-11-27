@@ -72,7 +72,10 @@ from .catalog import (
     list_historical_styles,
 )
 from .profile_resolver import (
+    SEPIA_MODES,
+    apply_dense_landscape_profile,
     apply_historical_era_profile,
+    apply_sepia_archival_profile,
     resolve_page_and_expressive_profile,
     sanitize_historical_clean_style,
 )
@@ -167,9 +170,12 @@ __all__ = [
     "SPACING_DUCTUS_PROFILES",
     "LIGATURE_PATTERNS",
     "resolve_ductus_param",
+    "SEPIA_MODES",
     "resolve_page_and_expressive_profile",
     "sanitize_historical_clean_style",
     "apply_historical_era_profile",
+    "apply_sepia_archival_profile",
+    "apply_dense_landscape_profile",
     "HISTORICAL_ERAS",
     "HISTORICAL_IMPLEMENTS",
     "HISTORICAL_FORBIDDEN_MEDIA",

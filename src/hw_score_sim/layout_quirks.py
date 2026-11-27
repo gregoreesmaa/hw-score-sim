@@ -77,6 +77,15 @@ def make_manuscript_paper(
     # Subtle per-page paper tone drift
     tone_shift = rng.normal(0.0, 0.012, size=3).astype(np.float32)
     page_rgb = np.clip(base_rgb + tone_shift, 0.05, 0.99)
+    sepia_chroma_cfg = style.get("sepia_paper_chroma")
+    if sepia_chroma_cfg is not None and float(sepia_chroma_cfg) > 0.0:
+        # Enforce warm aged-sepia paper tint (R > G > B) with controlled chroma (R - B)
+        c_tgt = float(np.clip(sepia_chroma_cfg, 0.06, 0.24))
+        r_s = float(np.clip(page_rgb[0], 0.80, 0.96))
+        b_s = float(np.clip(r_s - c_tgt, 0.56, 0.88))
+        r_s = float(np.clip(b_s + c_tgt, 0.72, 0.96))
+        g_s = float(b_s + 0.62 * (r_s - b_s))
+        page_rgb = np.array([r_s, g_s, b_s], dtype=np.float32)
     img = np.empty((height, width, 3), dtype=np.float32)
     img[:, :, 0] = page_rgb[0]
     img[:, :, 1] = page_rgb[1]
@@ -159,12 +168,21 @@ def make_manuscript_paper(
     img[:, :, 1] -= vignette * 0.92
     img[:, :, 2] -= vignette * 1.18
 
-    # 4. Reverse-side bleed-through ghosting (horizontally-mirrored verso staves, noteheads, stems, beams & barlines)
-    if bleed_through > 0.01:
+    # 4. Reverse-side bleed-through ghosting (horizontally-mirrored [and optionally inverted] verso staves, noteheads, stems, beams & barlines)
+    verso_alpha_cfg = style.get("verso_bleed_alpha")
+    verso_invert = bool(style.get("verso_bleed_invert", False))
+    verso_staves_cfg = style.get("verso_bleed_staves")
+    has_explicit_verso = verso_alpha_cfg is not None and float(verso_alpha_cfg) > 0.005
+    if bleed_through > 0.01 or has_explicit_verso:
         sh, sw = max(64, height // 2), max(64, width // 2)
         ghost_half = np.zeros((sh, sw), dtype=np.float32)
-        n_staves = max(3, min(10, sh // 95))
-        sp_ghost = max(3.0, sh / (n_staves * 13.5))
+        if verso_staves_cfg is not None:
+            n_staves = int(np.clip(int(verso_staves_cfg), 3, 14))
+        elif bool(style.get("dense_landscape", False)):
+            n_staves = int(np.clip(int(style.get("target_staves_per_page", 12)), 4, 14))
+        else:
+            n_staves = max(3, min(10, sh // 95))
+        sp_ghost = max(2.8, sh / (n_staves * (9.0 if n_staves >= 10 else 13.5)))
         margin_x = int(sw * 0.075)
         span_x = max(16, sw - 2 * margin_x)
         yy_g, xx_g = np.ogrid[:sh, :sw]
@@ -220,13 +238,21 @@ def make_manuscript_paper(
                     prev_tip = None
                 else:
                     prev_tip = (sx_i, ty_i)
-        # Mirror horizontally (verso side shows through reversed!) and gently soften
-        ghost_u8 = np.ascontiguousarray(np.clip(ghost_half[:, ::-1], 0.0, 1.0) * 255.0, dtype=np.uint8)
+        # Mirror horizontally (verso side shows through reversed!) and optionally invert vertically
+        ghost_flipped = ghost_half[::-1, ::-1] if verso_invert else ghost_half[:, ::-1]
+        if verso_invert:
+            # Subtle vertical phase shift so verso staves sit slightly offset from recto staves
+            v_shift = int(round(float(rng.uniform(0.30, 0.55)) * (sh / max(1, n_staves))))
+            if 0 < v_shift < sh:
+                ghost_flipped = np.roll(ghost_flipped, shift=v_shift, axis=0)
+        ghost_u8 = np.ascontiguousarray(np.clip(ghost_flipped, 0.0, 1.0) * 255.0, dtype=np.uint8)
         from PIL import ImageFilter
         pil_g = Image.fromarray(ghost_u8, mode="L").filter(ImageFilter.BoxBlur(1.2))
         ghost = np.asarray(pil_g.resize((int(width), int(height)), Image.BILINEAR), dtype=np.float32) * np.float32(1.0 / 255.0)
         verso_rgb = np.clip(ink_rgb * 0.65 + np.array([0.24, 0.20, 0.15], dtype=np.float32), 0.0, 1.0)
-        if bool(style.get("historical_era", False)):
+        if has_explicit_verso:
+            eff_alpha = float(np.clip(verso_alpha_cfg, 0.0, 0.30))
+        elif bool(style.get("historical_era", False)):
             eff_alpha = min(bleed_through, 0.28)
         else:
             eff_alpha = min(bleed_through, 0.25) * 0.28

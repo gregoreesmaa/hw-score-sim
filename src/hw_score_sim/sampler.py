@@ -461,6 +461,10 @@ class ScribeSampler:
         historical_clean: bool = False,
         era: Optional[str] = None,
         historical_era: bool = False,
+        sepia_mode: Optional[str] = None,
+        verso_bleed: Optional[float] = None,
+        dense_landscape: bool = False,
+        scanner_margin_frac: Optional[float] = None,
     ) -> None:
         if preset not in DIFFICULTY_PRESETS:
             valid = ", ".join(DIFFICULTY_ORDER)
@@ -475,6 +479,8 @@ class ScribeSampler:
             raise KeyError(f"Unknown paper preset {paper!r}. Valid presets: {valid}")
         if era is not None and era.strip().lower() not in ("all", "historical"):
             raise ValueError(f"era must be 'all' or 'historical', got {era!r}")
+        if sepia_mode is not None and sepia_mode.strip().lower() not in ("none", "aged", "faint_thin"):
+            raise ValueError(f"sepia_mode must be 'none', 'aged', or 'faint_thin', got {sepia_mode!r}")
 
         self.preset: str = preset
         self.master_seed: int = int(master_seed)
@@ -487,6 +493,14 @@ class ScribeSampler:
         self.historical_clean: bool = bool(historical_clean)
         self.era: str = era.strip().lower() if era is not None else ("historical" if historical_era else "all")
         self.historical_era: bool = bool(historical_era or self.era == "historical")
+        self.sepia_mode: Optional[str] = (
+            sepia_mode.strip().lower() if sepia_mode is not None and sepia_mode.strip().lower() != "none" else None
+        )
+        self.verso_bleed: Optional[float] = float(np.clip(verso_bleed, 0.0, 0.30)) if verso_bleed is not None else None
+        self.dense_landscape: bool = bool(dense_landscape)
+        self.scanner_margin_frac: Optional[float] = (
+            float(np.clip(scanner_margin_frac, 0.0, 0.05)) if scanner_margin_frac is not None else None
+        )
 
     def set_preset(self, preset: str) -> ScribeSampler:
         """Switch to a named difficulty preset and clear any continuous difficulty override."""
@@ -565,6 +579,20 @@ class ScribeSampler:
             from .profile_resolver import apply_historical_era_profile
 
             resolved = apply_historical_era_profile(resolved)
+        if self.sepia_mode is not None:
+            from .profile_resolver import apply_sepia_archival_profile
+
+            resolved = apply_sepia_archival_profile(resolved, mode=self.sepia_mode)
+        if self.dense_landscape:
+            from .profile_resolver import apply_dense_landscape_profile
+
+            resolved = apply_dense_landscape_profile(resolved, scanner_margin_frac=self.scanner_margin_frac)
+        if self.verso_bleed is not None:
+            resolved["verso_bleed_alpha"] = self.verso_bleed
+            if self.verso_bleed > 0.0:
+                resolved["verso_bleed_invert"] = True
+        if self.scanner_margin_frac is not None:
+            resolved["scanner_margin_frac"] = round(self.scanner_margin_frac, 4)
         return resolved, render_seed
 
 

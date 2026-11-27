@@ -92,8 +92,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Optional directory to export cropped per-system PNGs and per-system MusicXML targets",
     )
     parser.add_argument("--seed", type=int, default=42, help="Deterministic RNG seed")
-    parser.add_argument("--page-w", type=int, default=1650, help="Output page width in pixels")
-    parser.add_argument("--page-h", type=int, default=2200, help="Output page height in pixels")
+    parser.add_argument("--page-w", type=int, default=None, help="Output page width in pixels (default: 1650, or 2200 with --dense-landscape)")
+    parser.add_argument("--page-h", type=int, default=None, help="Output page height in pixels (default: 2200, or 1650 with --dense-landscape)")
     parser.add_argument(
         "--clean-paper",
         action="store_true",
@@ -109,6 +109,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         choices=("all", "historical"),
         default="all",
         help="Era preset: 'historical' filters out modern jazz/film styles and boosts 18th/19th-century fidelity (verso bleed 0.28, in-bar cross-outs, aged iron-gall/sepia ink variance)",
+    )
+    parser.add_argument(
+        "--sepia-mode",
+        choices=("none", "aged", "faint_thin"),
+        default="none",
+        help="Aged sepia paper tint (chroma 0.08-0.22) & warm iron-gall ink ('aged') or faded thin-stroke sepia mode ('faint_thin')",
+    )
+    parser.add_argument(
+        "--verso-bleed",
+        type=float,
+        default=None,
+        help="Subtle horizontally-mirrored inverted verso bleed-through alpha [0.0..0.30] (e.g. 0.08-0.16)",
+    )
+    parser.add_argument(
+        "--dense-landscape",
+        action="store_true",
+        help="Dense 12-staff landscape archival preset (zero extra inter-system gap, forced left-margin system braces, optional dark scanner border)",
+    )
+    parser.add_argument(
+        "--scanner-margin",
+        type=float,
+        default=None,
+        help="Optional dark archival scanner-bed border fraction [0.0..0.05] (e.g. 0.025)",
     )
     parser.add_argument(
         "--omit-cont-header-prob",
@@ -151,6 +174,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     out_dir = pathlib.Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    page_w = args.page_w if args.page_w is not None else (2200 if args.dense_landscape else 1650)
+    page_h = args.page_h if args.page_h is not None else (1650 if args.dense_landscape else 2200)
+    sepia_arg = None if args.sepia_mode == "none" else args.sepia_mode
+
     for idx, sname in enumerate(style_names):
         out_png = out_dir / f"{in_path.stem}__{sname}.png"
         try:
@@ -159,13 +186,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 style_name=sname,
                 out_png=out_png,
                 seed=args.seed + idx,
-                page_w=args.page_w,
-                page_h=args.page_h,
+                page_w=page_w,
+                page_h=page_h,
                 export_train_dir=args.export_train_dir,
                 clean_paper=args.clean_paper,
                 historical_clean=args.historical_clean,
                 historical_era=historical_era,
                 omit_cont_header_prob=args.omit_cont_header_prob,
+                sepia_mode=sepia_arg,
+                verso_bleed=args.verso_bleed,
+                dense_landscape=args.dense_landscape,
+                scanner_margin_frac=args.scanner_margin,
             )
         except KeyError:
             all_known = styles.list_styles()

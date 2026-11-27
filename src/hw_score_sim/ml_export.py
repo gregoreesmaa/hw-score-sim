@@ -281,6 +281,10 @@ def render_sample(
     historical_clean: bool = False,
     historical_era: bool = False,
     omit_cont_header_prob: Optional[float] = None,
+    sepia_mode: Optional[str] = None,
+    verso_bleed: Optional[float] = None,
+    dense_landscape: bool = False,
+    scanner_margin_frac: Optional[float] = None,
 ) -> RenderSample:
     """Render a score in memory and return a `RenderSample` with schema-1.0 GT metadata.
 
@@ -329,6 +333,10 @@ def render_sample(
             historical_clean=bool(historical_clean),
             historical_era=bool(historical_era),
             omit_cont_header_prob=omit_cont_header_prob,
+            sepia_mode=sepia_mode,
+            verso_bleed=verso_bleed,
+            dense_landscape=bool(dense_landscape),
+            scanner_margin_frac=scanner_margin_frac,
         )
 
         # Load PIL image cleanly into memory before temp directory cleanup
@@ -411,6 +419,9 @@ def render_sample(
         "omit_cont_header_prob": float(raw_gt.get("omit_cont_header_prob", 0.0)),
         "omit_cont_header": bool(raw_gt.get("omit_cont_header", False)),
         "historical_era": bool(raw_gt.get("historical_era", False)),
+        "sepia_mode": str(raw_gt.get("sepia_mode", "none")),
+        "dense_landscape": bool(raw_gt.get("dense_landscape", False)),
+        "verso_bleed_alpha": raw_gt.get("verso_bleed_alpha"),
         "systems": enriched_systems,
     }
     if "manuscript_marks" in raw_gt:
