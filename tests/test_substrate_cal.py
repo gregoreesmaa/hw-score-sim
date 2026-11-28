@@ -17,6 +17,7 @@ from PIL import Image
 from hw_score_sim import (
     _substrate_cal,
     cli,
+    get_style,
     render_sample,
     render_score_handwritten,
 )
@@ -130,6 +131,142 @@ class TestSubstrateCalIntegration(unittest.TestCase):
             self.assertTrue(res_s["calibrated"], f"render_sample: {res_s}")
             self.assertGreaterEqual(res_s["z_score"], 6.5)
 
+    def test_paper_luminance_contrast_and_warmth_presets(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            xml_p = pathlib.Path(td) / "score.musicxml"
+            xml_p.write_text(cli.SHOWCASE_MUSICXML, encoding="utf-8")
+
+            parchment_style = get_style("baroque_quill_neat")
+            parchment_style["paper_type"] = "aged_rag"
+
+            presets = [
+                ("clean_paper", "beethoven_hurried_autograph", dict(clean_paper=True)),
+                ("historical_clean", "beethoven_hurried_autograph", dict(historical_clean=True)),
+                ("parchment", parchment_style, dict(clean_paper=False, historical_clean=False)),
+            ]
+            channel_means: dict[str, np.ndarray] = {}
+            for label, style, kw in presets:
+                with self.subTest(preset=label):
+                    out_p = pathlib.Path(td) / f"{label}.png"
+                    render_score_handwritten(
+                        xml_p,
+                        style,
+                        out_p,
+                        seed=42,
+                        page_w=900,
+                        page_h=1200,
+                        **kw,
+                    )
+                    arr = np.asarray(Image.open(out_p).convert("RGB"))
+                    self.assertEqual(arr.dtype, np.uint8)
+                    self.assertEqual(arr.shape, (1200, 900, 3))
+                    self.assertGreaterEqual(int(arr.min()), 0)
+                    self.assertLessEqual(int(arr.max()), 255)
+
+                    # Non-saturated ink contrast: distinct dark ink and bright paper substrate
+                    p01 = float(np.percentile(arr, 1))
+                    p95 = float(np.percentile(arr, 95))
+                    self.assertLess(p01, 140.0, f"{label}: ink too faint (p01={p01:.1f})")
+                    self.assertGreater(p95, 180.0, f"{label}: paper too dark (p95={p95:.1f})")
+                    self.assertGreaterEqual(p95 - p01, 80.0, f"{label}: low contrast ({p95 - p01:.1f})")
+
+                    gray = arr.mean(axis=2)
+                    dark_frac = float(np.mean(gray < (p95 - 40.0)))
+                    self.assertGreater(dark_frac, 0.002, f"{label}: almost no ink rendered")
+                    self.assertLess(dark_frac, 0.45, f"{label}: ink over-saturated ({dark_frac:.3f})")
+
+                    channel_means[label] = arr.mean(axis=(0, 1))
+
+            # Clean paper should be brighter than aged-rag parchment; aged rag should be warm (R >= B)
+            self.assertGreater(
+                float(channel_means["clean_paper"].mean()),
+                float(channel_means["parchment"].mean()),
+            )
+            r_parch, _g_parch, b_parch = channel_means["parchment"]
+            self.assertGreaterEqual(
+                float(r_parch),
+                float(b_parch),
+                f"Expected warm aged-rag substrate (R >= B), got R={r_parch:.1f}, B={b_parch:.1f}",
+            )
+
+    def test_rastrum_staff_spacing_and_vertical_monotonicity(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            xml_p = pathlib.Path(td) / "score.musicxml"
+            xml_p.write_text(cli.SHOWCASE_MUSICXML, encoding="utf-8")
+
+            configs = [
+                ("portrait", dict(style_name="beethoven_hurried_autograph", page_w=1200, page_h=1600, dense_landscape=False)),
+                ("dense_landscape", dict(style_name="baroque_quill_neat", page_w=1400, page_h=1050, dense_landscape=True)),
+            ]
+            for label, kw in configs:
+                with self.subTest(layout=label):
+                    out_p = pathlib.Path(td) / f"{label}.png"
+                    gt = render_score_handwritten(xml_p, out_png=out_p, seed=42, **kw)
+                    staves = [st for sys in gt["systems"] for st in sys["staves"]]
+                    self.assertGreaterEqual(len(staves), 1)
+                    if label == "dense_landscape":
+                        self.assertGreaterEqual(len(staves), 8)
+
+                    sps = np.array([float(st["sp"]) for st in staves], dtype=np.float64)
+                    self.assertTrue(np.all((sps >= 6.0) & (sps <= 25.0)), f"{label}: out-of-range sp {sps}")
+                    if len(sps) > 1:
+                        self.assertLessEqual(
+                            float(np.std(sps) / np.mean(sps)),
+                            0.05,
+                            f"{label}: inconsistent staff spacing {sps}",
+                        )
+
+                    y_centers = [float(st["y_center"]) for st in staves]
+                    for i in range(len(y_centers) - 1):
+                        gap = y_centers[i + 1] - y_centers[i]
+                        min_clearance = 4.0 * float(staves[i]["sp"])
+                        self.assertGreater(
+                            gap,
+                            min_clearance,
+                            f"{label}: staves {i} and {i + 1} overlap or non-monotonic (gap={gap:.1f}, min={min_clearance:.1f})",
+                        )
+
+                    for st in staves:
+                        pts = st["ctrl_pts"]
+                        self.assertGreaterEqual(len(pts), 2)
+                        xs = [float(p[0]) for p in pts]
+                        self.assertTrue(all(xs[i] < xs[i + 1] for i in range(len(xs) - 1)))
+                        self.assertAlmostEqual(xs[0], float(st["x_left"]), delta=1.5)
+                        self.assertAlmostEqual(xs[-1], float(st["x_right"]), delta=1.5)
+
+    def test_rastrum_five_line_optical_legibility(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            xml_p = pathlib.Path(td) / "score.musicxml"
+            xml_p.write_text(cli.SHOWCASE_MUSICXML, encoding="utf-8")
+            out_p = pathlib.Path(td) / "rastrum_lines.png"
+            gt = render_score_handwritten(
+                xml_p,
+                "baroque_quill_neat",
+                out_p,
+                seed=19,
+                page_w=1200,
+                page_h=900,
+                clean_paper=True,
+            )
+            gray = np.asarray(Image.open(out_p).convert("L"), dtype=np.float64)
+            staff = gt["systems"][0]["staves"][0]
+            sp = float(staff["sp"])
+            yc = float(staff["y_center"])
+            x0 = max(0, int(round(float(staff["x_left"]) + 20)))
+            x1 = min(gray.shape[1], int(round(float(staff["x_right"]) - 20)))
+            self.assertGreater(x1 - x0, 200)
+
+            # Each of the 5 rastrum lines (offsets -2..+2 * sp) must contain visible ink pixels
+            for line_idx in (-2, -1, 0, 1, 2):
+                y_line = int(round(yc + line_idx * sp))
+                band = gray[max(0, y_line - int(round(sp * 0.6))) : min(gray.shape[0], y_line + int(round(sp * 0.6)) + 1), x0:x1]
+                ink_cols = float(np.mean(band.min(axis=0) < 220.0))
+                self.assertGreater(
+                    ink_cols,
+                    0.50,
+                    f"Rastrum line {line_idx} missing optical ink coverage ({ink_cols:.2f})",
+                )
+
 
 class TestSubstrateCalEndToEnd(unittest.TestCase):
     """End-to-end CLI render, geometric/compression robustness, and real-manuscript specificity."""
@@ -212,6 +349,85 @@ class TestSubstrateCalEndToEnd(unittest.TestCase):
 
         self.assertEqual(fps, 0, f"Expected 0/20 false triggers on real RISM manuscripts, got {fps}/20 (max_z={max_z:.3f})")
         self.assertLess(max_z, 5.5, f"Real RISM max_z={max_z:.3f} >= 5.5")
+
+    def test_canvas_dimensions_aspect_ratio_and_margin_integrity(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            xml_p = pathlib.Path(td) / "canvas_score.musicxml"
+            xml_p.write_text(cli.SHOWCASE_MUSICXML, encoding="utf-8")
+
+            for label, (pw, ph), extra in (
+                ("portrait", (1000, 1400), dict(dense_landscape=False)),
+                ("landscape", (1400, 1000), dict(dense_landscape=True)),
+            ):
+                with self.subTest(canvas=label):
+                    out_p = pathlib.Path(td) / f"{label}.png"
+                    gt = render_score_handwritten(
+                        xml_p,
+                        "beethoven_hurried_autograph",
+                        out_p,
+                        seed=31,
+                        page_w=pw,
+                        page_h=ph,
+                        **extra,
+                    )
+                    with Image.open(out_p) as im:
+                        w, h = im.size
+                    self.assertEqual((w, h), (pw, ph))
+                    self.assertEqual((gt["page_w"], gt["page_h"]), (pw, ph))
+                    self.assertAlmostEqual(w / h, pw / ph, places=6)
+
+                    for sys in gt["systems"]:
+                        for st in sys["staves"]:
+                            sp = float(st["sp"])
+                            self.assertGreater(float(st["x_left"]), 0.0)
+                            self.assertLess(float(st["x_right"]), float(pw))
+                            self.assertGreater(float(st["y_center"]) - 2.0 * sp, 0.0)
+                            self.assertLess(float(st["y_center"]) + 2.0 * sp, float(ph))
+
+            rc = cli.main(
+                [
+                    "--input",
+                    str(xml_p),
+                    "--styles",
+                    "baroque_quill_neat",
+                    "--out-dir",
+                    td,
+                    "--page-w",
+                    "1100",
+                    "--page-h",
+                    "1540",
+                    "--seed",
+                    "31",
+                ]
+            )
+            self.assertEqual(rc, 0)
+            cli_png = pathlib.Path(td) / "canvas_score__baroque_quill_neat.png"
+            self.assertTrue(cli_png.exists())
+            with Image.open(cli_png) as im:
+                self.assertEqual(im.size, (1100, 1540))
+
+    def test_deterministic_seed_reproducibility_and_diversity(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            xml_p = pathlib.Path(td) / "seed_score.musicxml"
+            xml_p.write_text(cli.SHOWCASE_MUSICXML, encoding="utf-8")
+
+            p_a1 = pathlib.Path(td) / "seed101_a.png"
+            p_a2 = pathlib.Path(td) / "seed101_b.png"
+            p_b = pathlib.Path(td) / "seed202.png"
+
+            kw = dict(style_name="beethoven_hurried_autograph", page_w=900, page_h=1200)
+            render_score_handwritten(xml_p, out_png=p_a1, seed=101, **kw)
+            render_score_handwritten(xml_p, out_png=p_a2, seed=101, **kw)
+            render_score_handwritten(xml_p, out_png=p_b, seed=202, **kw)
+
+            arr_a1 = np.asarray(Image.open(p_a1).convert("RGB"))
+            arr_a2 = np.asarray(Image.open(p_a2).convert("RGB"))
+            arr_b = np.asarray(Image.open(p_b).convert("RGB"))
+
+            np.testing.assert_array_equal(arr_a1, arr_a2)
+            self.assertFalse(np.array_equal(arr_a1, arr_b))
+            mean_abs_diff = float(np.mean(np.abs(arr_a1.astype(np.float32) - arr_b.astype(np.float32))))
+            self.assertGreater(mean_abs_diff, 0.5, f"Distinct seeds produced nearly identical renders ({mean_abs_diff:.3f})")
 
 
 if __name__ == "__main__":
