@@ -464,6 +464,9 @@ class ScribeSampler:
         sepia_mode: Optional[str] = None,
         verso_bleed: Optional[float] = None,
         dense_landscape: bool = False,
+        dense_archival: bool = False,
+        archival_layout: Optional[str] = None,
+        archival_diversity: bool = False,
         scanner_margin_frac: Optional[float] = None,
     ) -> None:
         if preset not in DIFFICULTY_PRESETS:
@@ -498,6 +501,11 @@ class ScribeSampler:
         )
         self.verso_bleed: Optional[float] = float(np.clip(verso_bleed, 0.0, 0.30)) if verso_bleed is not None else None
         self.dense_landscape: bool = bool(dense_landscape)
+        self.dense_archival: bool = bool(dense_archival)
+        self.archival_layout: Optional[str] = (
+            archival_layout.strip().lower() if archival_layout is not None else None
+        )
+        self.archival_diversity: bool = bool(archival_diversity)
         self.scanner_margin_frac: Optional[float] = (
             float(np.clip(scanner_margin_frac, 0.0, 0.05)) if scanner_margin_frac is not None else None
         )
@@ -587,6 +595,74 @@ class ScribeSampler:
             from .profile_resolver import apply_dense_landscape_profile
 
             resolved = apply_dense_landscape_profile(resolved, scanner_margin_frac=self.scanner_margin_frac)
+        if self.dense_archival or self.archival_layout is not None:
+            from .profile_resolver import apply_dense_archival_profile
+
+            resolved = apply_dense_archival_profile(
+                resolved,
+                layout_profile=self.archival_layout,
+                scanner_margin_frac=self.scanner_margin_frac,
+            )
+        if self.archival_diversity:
+            from .profile_resolver import (
+                ARCHIVAL_LAYOUT_PROFILES,
+                apply_dense_archival_profile,
+                apply_sepia_archival_profile,
+            )
+
+            # Broad multi-regime archival diversity across ink, paper, nib, verso bleed & dense layout
+            u_reg = float(rng.random())
+            if u_reg < 0.35:
+                # High-contrast dark iron-gall fair copy
+                resolved["ink_rgb"] = (
+                    round(float(rng.uniform(0.05, 0.14)), 4),
+                    round(float(rng.uniform(0.04, 0.11)), 4),
+                    round(float(rng.uniform(0.03, 0.09)), 4),
+                )
+                resolved["staff_ink_rgb"] = (
+                    round(float(rng.uniform(0.24, 0.44)), 4),
+                    round(float(rng.uniform(0.20, 0.38)), 4),
+                    round(float(rng.uniform(0.16, 0.32)), 4),
+                )
+                resolved["edge_crispness"] = round(float(rng.uniform(0.55, 0.90)), 4)
+                resolved["ink_mass"] = round(float(rng.uniform(0.32, 0.72)), 4)
+            elif u_reg < 0.62:
+                # Aged oxidized sepia archival
+                resolved = apply_sepia_archival_profile(resolved, mode="aged")
+                resolved["edge_crispness"] = round(float(rng.uniform(0.35, 0.75)), 4)
+                resolved["ink_mass"] = round(float(rng.uniform(0.25, 0.60)), 4)
+            elif u_reg < 0.78:
+                # Light / faded graphite pencil sketch
+                g_val = float(rng.uniform(0.26, 0.42))
+                resolved["ink_rgb"] = (round(g_val, 4), round(g_val + 0.01, 4), round(g_val + 0.02, 4))
+                resolved["staff_ink_rgb"] = (round(g_val + 0.10, 4), round(g_val + 0.09, 4), round(g_val + 0.08, 4))
+                resolved["grain_strength"] = round(float(rng.uniform(0.32, 0.55)), 4)
+                resolved["ink_dropout"] = round(float(rng.uniform(0.16, 0.32)), 4)
+                resolved["eraser_smudge_prob"] = round(float(rng.uniform(0.25, 0.65)), 4)
+                resolved["edge_crispness"] = round(float(rng.uniform(0.15, 0.45)), 4)
+                resolved["ink_mass"] = round(float(rng.uniform(0.05, 0.22)), 4)
+            else:
+                # Faint thin-stroke sepia archival
+                resolved = apply_sepia_archival_profile(resolved, mode="faint_thin")
+                resolved["edge_crispness"] = round(float(rng.uniform(0.30, 0.70)), 4)
+
+            resolved["nib_angle_deg"] = round(float(rng.uniform(25.0, 55.0)), 2)
+            resolved["nib_anisotropy"] = round(float(rng.uniform(0.30, 0.85)), 4)
+            resolved["rastrum_curve_var"] = round(float(rng.uniform(0.05, 0.24)), 4)
+
+            if not self.dense_landscape and not self.dense_archival and self.archival_layout is None:
+                lay_choice = str(ARCHIVAL_LAYOUT_PROFILES[int(rng.integers(0, len(ARCHIVAL_LAYOUT_PROFILES)))])
+                resolved = apply_dense_archival_profile(
+                    resolved,
+                    layout_profile=lay_choice,
+                    scanner_margin_frac=self.scanner_margin_frac,
+                )
+
+            if self.verso_bleed is None and float(rng.random()) < 0.55:
+                vb_amt = round(float(rng.uniform(0.08, 0.26)), 4)
+                resolved["verso_bleed_alpha"] = vb_amt
+                resolved["verso_bleed_invert"] = True
+
         if self.verso_bleed is not None:
             resolved["verso_bleed_alpha"] = self.verso_bleed
             if self.verso_bleed > 0.0:

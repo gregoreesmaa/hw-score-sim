@@ -337,18 +337,21 @@ def _apply_ink_feather(
     y1: int,
     ink_feather: float,
     tooth: Optional[np.ndarray] = None,
+    edge_crispness: float = 0.0,
 ) -> np.ndarray:
     """Add an organic porous-paper wet-ink feathering/bleed halo around a stroke patch."""
     f = float(np.clip(ink_feather, 0.0, 1.0))
     if f <= 1e-4 or patch.size == 0:
         return patch
-    radius = max(1, int(round(1.0 + 2.5 * f)))
+    crisp = float(np.clip(edge_crispness, 0.0, 1.0))
+    radius = max(1, int(round(1.0 + 2.5 * f * (1.0 - 0.35 * crisp))))
     halo = _soft_blur_2d(patch, radius)
     if tooth is None:
         tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
-    # Porous fibers wick ink unevenly outward.
+    # Porous fibers wick ink unevenly outward; crisp iron-gall attenuates soft outer halo.
     fiber_mod = np.float32(0.50) + np.float32(0.85) * tooth
-    feathered = np.clip(halo * fiber_mod * np.float32(0.55 * f), np.float32(0.0), np.float32(0.85))
+    halo_gain = np.float32(0.55 * f * (1.0 - 0.50 * crisp))
+    feathered = np.clip(halo * fiber_mod * halo_gain, np.float32(0.0), np.float32(0.85))
     return np.maximum(patch, feathered)
 
 
@@ -363,8 +366,12 @@ def _stamp_discs_to_canvas(
     grain_strength: float,
     ink_feather: float = 0.0,
     pool_strengths: Optional[np.ndarray] = None,
+    edge_crispness: float = 0.0,
+    nib_anisotropy: float = 0.0,
+    nib_angle_rad: float = 0.0,
+    ink_mass: float = 0.0,
 ) -> None:
-    """Rasterize variable-radius anti-aliased discs into a local bbox and blend."""
+    """Rasterize variable-radius anti-aliased discs (or chisel-nib footprints) into a local bbox and blend."""
     if len(xs) == 0:
         return
     valid = (alphas > 1e-4) & (radii > 1e-3)
@@ -381,6 +388,9 @@ def _stamp_discs_to_canvas(
     n_discs = len(xs)
     max_r = float(np.max(radii))
     feather_f = 0.0 if ink_feather <= 0.0 else (1.0 if ink_feather >= 1.0 else float(ink_feather))
+    crisp_f = 0.0 if edge_crispness <= 0.0 else (1.0 if edge_crispness >= 1.0 else float(edge_crispness))
+    aniso_f = 0.0 if nib_anisotropy <= 0.0 else (1.0 if nib_anisotropy >= 1.0 else float(nib_anisotropy))
+    mass_f = 0.0 if ink_mass <= 0.0 else (1.0 if ink_mass >= 1.0 else float(ink_mass))
     feather_pad = int(math.ceil(feather_f * 4.0)) + 1 if feather_f > 1e-4 else 0
     pad = int(math.ceil(max_r + 1.5)) + feather_pad
     x0 = max(0, int(math.floor(float(np.min(xs)))) - pad)
@@ -412,6 +422,10 @@ def _stamp_discs_to_canvas(
                 grain_strength,
                 ink_feather=feather_f,
                 pool_strengths=ps_chunk,
+                edge_crispness=crisp_f,
+                nib_anisotropy=aniso_f,
+                nib_angle_rad=nib_angle_rad,
+                ink_mass=mass_f,
             )
         return
 
@@ -425,12 +439,25 @@ def _stamp_discs_to_canvas(
     fx = lx - cx_i
     fy = ly - cy_i
 
-    # Vectorized (B, W, W) disc coverage computation.
+    # Vectorized (B, W, W) disc / angled chisel-nib coverage computation.
     offsets = np.arange(-rad_i, rad_i + 1, dtype=np.float32)
     gx = offsets[None, None, :] - fx[:, None, None]  # (B, 1, W)
     gy = offsets[None, :, None] - fy[:, None, None]  # (B, W, 1)
-    dist = np.sqrt(gx * gx + gy * gy)  # (B, W, W)
-    cov = np.clip((r_f32[:, None, None] + np.float32(0.5)) - dist, np.float32(0.0), np.float32(1.0))
+    if aniso_f > 1e-4:
+        cos_a = np.float32(math.cos(nib_angle_rad))
+        sin_a = np.float32(math.sin(nib_angle_rad))
+        u_nib = gx * cos_a + gy * sin_a
+        v_nib = -gx * sin_a + gy * cos_a
+        inv_minor = np.float32(1.0 / max(0.38, 1.0 - 0.55 * aniso_f))
+        dist = np.sqrt(u_nib * u_nib + (v_nib * inv_minor) ** 2)
+    else:
+        dist = np.sqrt(gx * gx + gy * gy)  # (B, W, W)
+
+    if crisp_f > 1e-4:
+        edge_gain = np.float32(1.0 + 1.5 * crisp_f)
+        cov = np.clip((r_f32[:, None, None] - dist) * edge_gain + np.float32(0.5), np.float32(0.0), np.float32(1.0))
+    else:
+        cov = np.clip((r_f32[:, None, None] + np.float32(0.5)) - dist, np.float32(0.0), np.float32(1.0))
     cov *= a_f32[:, None, None]
 
     use_pool = pool_strengths is not None and float(np.max(pool_strengths)) > 1e-4
@@ -498,7 +525,9 @@ def _stamp_discs_to_canvas(
         tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
 
     if feather_f > 1e-4:
-        patch = _apply_ink_feather(patch, canvas, x0, y0, x1, y1, feather_f, tooth=tooth)
+        patch = _apply_ink_feather(
+            patch, canvas, x0, y0, x1, y1, feather_f, tooth=tooth, edge_crispness=crisp_f
+        )
 
     if grain_strength > 0.0 and tooth is not None:
         # Paper tooth attenuates ink more strongly in lighter/drier areas.
@@ -509,16 +538,21 @@ def _stamp_discs_to_canvas(
         )
         patch *= grain_mod
 
-    if pool_patch is not None:
-        # Speed-dependent pooling darkens ink slightly and boosts local opacity at sharp turns.
+    if pool_patch is not None or mass_f > 1e-4:
+        # Iron-gall capillary rim darkening + endpoint/junction ink_mass pooling.
+        eff_pool = pool_patch if pool_patch is not None else np.zeros_like(patch)
+        if mass_f > 1e-4:
+            # Edge perimeter rim where wet iron-gall concentrates as it dries.
+            rim = np.clip(patch * (np.float32(1.0) - patch) * np.float32(4.0), np.float32(0.0), np.float32(1.0))
+            eff_pool = np.clip(eff_pool + rim * np.float32(0.42 * mass_f), np.float32(0.0), np.float32(1.0))
         eff_alpha = np.clip(
-            patch * np.float32(stroke_opacity) + pool_patch * np.float32(0.18),
+            patch * np.float32(stroke_opacity) + eff_pool * np.float32(0.20),
             np.float32(0.0),
             np.float32(1.0),
         )
         darken = np.clip(
-            np.float32(1.0) - np.float32(0.32) * pool_patch,
-            np.float32(0.55),
+            np.float32(1.0) - np.float32(0.35) * eff_pool,
+            np.float32(0.50),
             np.float32(1.0),
         )[..., None]
         local_ink = np.clip(ink_rgb[None, None, :] * darken, np.float32(0.0), np.float32(1.0))
@@ -657,7 +691,10 @@ def draw_calligraphic_polyline(
             widths += bw * pool_e * g_end
             alphas = np.minimum(1.0, alphas + 0.15 * g_end)
 
-    # 4. Speed-dependent ink pooling at sharp curvature / turns.
+    # 4. Speed-dependent ink pooling at sharp curvature / turns + ink_mass endpoint/junction pooling.
+    ink_mass = float(np.clip(style.get("ink_mass", 0.0), 0.0, 1.0))
+    edge_crispness = float(np.clip(style.get("edge_crispness", 0.0), 0.0, 1.0))
+    nib_anisotropy = float(np.clip(style.get("nib_anisotropy", 0.0), 0.0, 1.0))
     pool_strengths: Optional[np.ndarray] = None
     if ink_pool > 0.0 and len(res_pts) >= 4:
         unwrapped = np.unwrap(theta)
@@ -671,6 +708,16 @@ def draw_calligraphic_polyline(
             widths += bw * (0.20 * ink_pool) * curv
             alphas = np.minimum(1.0, alphas + 0.25 * ink_pool * curv)
             pool_strengths = np.clip(curv * min(1.0, ink_pool * 1.4), 0.0, 1.0).astype(np.float32)
+
+    if ink_mass > 1e-4 and total_len > 2.5:
+        sigma_m = max(0.03, min(0.09, 2.2 / max(total_len, 1.0)))
+        end_mass = (
+            np.exp(-0.5 * (t / sigma_m) ** 2) + np.exp(-0.5 * ((1.0 - t) / sigma_m) ** 2)
+        ) * (0.75 * ink_mass)
+        if pool_strengths is None:
+            pool_strengths = np.clip(end_mass, 0.0, 1.0).astype(np.float32)
+        else:
+            pool_strengths = np.clip(pool_strengths + end_mass.astype(np.float32), 0.0, 1.0)
 
     # 5. Dry-brush / ink-skip dropout along stroke.
     ink_dropout = float(np.clip(float(style.get("ink_dropout", 0.05)) + dip_extra_drop, 0.0, 0.95))
@@ -711,6 +758,10 @@ def draw_calligraphic_polyline(
             grain_strength,
             ink_feather=ink_feather,
             pool_strengths=ps_both,
+            edge_crispness=edge_crispness,
+            nib_anisotropy=nib_anisotropy,
+            nib_angle_rad=nib_angle,
+            ink_mass=ink_mass,
         )
         return
 
@@ -725,6 +776,10 @@ def draw_calligraphic_polyline(
         grain_strength,
         ink_feather=ink_feather,
         pool_strengths=pool_strengths,
+        edge_crispness=edge_crispness,
+        nib_anisotropy=nib_anisotropy,
+        nib_angle_rad=nib_angle,
+        ink_mass=ink_mass,
     )
 
 
@@ -1058,6 +1113,10 @@ def draw_filled_blob(
     c3_phi = (np.float32(4.0) * cc - np.float32(3.0)) * c
     s3_phi = (np.float32(3.0) - np.float32(4.0) * s * s) * s
 
+    edge_crispness = float(np.clip(style.get("edge_crispness", 0.0), 0.0, 1.0))
+    nib_anisotropy = float(np.clip(style.get("nib_anisotropy", 0.0), 0.0, 1.0))
+    ink_mass = float(np.clip(style.get("ink_mass", 0.0), 0.0, 1.0))
+
     boundary = (
         np.float32(1.0)
         + np.float32(c1 * math.cos(p1)) * c
@@ -1067,11 +1126,22 @@ def draw_filled_blob(
         + np.float32(c3 * math.cos(p3)) * c3_phi
         - np.float32(c3 * math.sin(p3)) * s3_phi
     )
+    if nib_anisotropy > 1e-4:
+        # Subtle broad-nib quill-dab 4-fold chisel squaring aligned to nib angle.
+        c4_phi = np.float32(2.0) * c2_phi * c2_phi - np.float32(1.0)
+        s4_phi = np.float32(2.0) * s2_phi * c2_phi
+        nib_rel = _get_nib_angle_rad(style) - theta0
+        dab_amp = np.float32(0.065 * nib_anisotropy)
+        boundary = boundary + dab_amp * (
+            np.float32(math.cos(4.0 * nib_rel)) * c4_phi
+            + np.float32(math.sin(4.0 * nib_rel)) * s4_phi
+        )
 
     # Anti-aliased edge in pixel units (approximate local scale by harmonic mean of rx, ry).
     scale_px = np.float32(max(1.0, 2.0 * rx * ry / (rx + ry)))
     signed_px = (boundary - norm_r) * scale_px
-    patch = np.clip(signed_px + np.float32(0.5), np.float32(0.0), np.float32(1.0))
+    edge_gain = np.float32(1.0 + 1.35 * edge_crispness)
+    patch = np.clip(signed_px * edge_gain + np.float32(0.5), np.float32(0.0), np.float32(1.0))
 
     # Subtle internal dry-brush / pencil shading streak when grain or dropout is high.
     dip_op_mult, dip_extra_drop = canvas.advance_ink_dip(style)
@@ -1083,7 +1153,9 @@ def draw_filled_blob(
         tooth = canvas.get_tooth_patch(x0, y0, x1, y1)
 
     if ink_feather > 1e-4:
-        patch = _apply_ink_feather(patch, canvas, x0, y0, x1, y1, ink_feather, tooth=tooth)
+        patch = _apply_ink_feather(
+            patch, canvas, x0, y0, x1, y1, ink_feather, tooth=tooth, edge_crispness=edge_crispness
+        )
 
     if grain_strength > 0.0 and tooth is not None:
         patch *= np.clip(1.0 - grain_strength * (1.0 - tooth) * 1.15, 0.12, 1.0)
@@ -1095,5 +1167,17 @@ def draw_filled_blob(
 
     ink_rgb, stroke_opacity = _perturb_ink_color(color_rgb, style, rng)
     stroke_opacity = float(np.clip(stroke_opacity * dip_op_mult, 0.12, 1.0))
-    patch *= np.float32(stroke_opacity)
-    canvas.composite_patch(x0, y0, x1, y1, patch, ink_rgb)
+    if ink_mass > 1e-4:
+        # Iron-gall capillary rim pooling: slightly darker ink near outer oval boundary.
+        rim_zone = np.exp(-0.5 * ((signed_px - np.float32(0.9)) / np.float32(0.85)) ** 2) * patch
+        rim_strength = np.clip(rim_zone * np.float32(ink_mass), np.float32(0.0), np.float32(1.0))
+        eff_alpha = np.clip(patch * np.float32(stroke_opacity) + rim_strength * np.float32(0.14), np.float32(0.0), np.float32(1.0))
+        darken = np.clip(np.float32(1.0) - np.float32(0.30) * rim_strength, np.float32(0.55), np.float32(1.0))[..., None]
+        local_ink = np.clip(ink_rgb[None, None, :] * darken, np.float32(0.0), np.float32(1.0))
+        dst = canvas.buf[y0:y1, x0:x1]
+        diff = local_ink - dst
+        diff *= eff_alpha[..., None]
+        dst += diff
+    else:
+        patch *= np.float32(stroke_opacity)
+        canvas.composite_patch(x0, y0, x1, y1, patch, ink_rgb)

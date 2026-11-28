@@ -348,6 +348,14 @@ def apply_historical_era_profile(
     out["ink_var"] = float(np.clip(max(float(out.get("ink_var", 0.22)), 0.18), 0.18, 0.34))
     out["ink_pooling"] = float(np.clip(max(float(out.get("ink_pooling", 0.26)), 0.20), 0.20, 0.42))
     out["ink_feather"] = float(np.clip(max(float(out.get("ink_feather", 0.16)), 0.12), 0.12, 0.28))
+    if "nib_anisotropy" not in out or out["nib_anisotropy"] is None:
+        out["nib_anisotropy"] = round(float(0.38 + 0.42 * _u01("he_aniso", name, era)), 4)
+    if "edge_crispness" not in out or out["edge_crispness"] is None:
+        out["edge_crispness"] = round(float(0.35 + 0.45 * _u01("he_crisp", name, era)), 4)
+    if "ink_mass" not in out or out["ink_mass"] is None:
+        out["ink_mass"] = round(float(0.25 + 0.40 * _u01("he_mass", name, era)), 4)
+    if "rastrum_curve_var" not in out or out["rastrum_curve_var"] is None:
+        out["rastrum_curve_var"] = round(float(0.06 + 0.16 * _u01("he_rcurv", name, era)), 4)
 
     # 3. In-bar cross-outs / ink corrections & off-GT cancellations
     out["scratch_out_prob"] = float(np.clip(max(float(out.get("scratch_out_prob", 0.0)), 0.25), 0.25, 1.0))
@@ -502,6 +510,378 @@ def apply_dense_landscape_profile(
     return out
 
 
+ARCHIVAL_LAYOUT_PROFILES: Tuple[str, ...] = (
+    "oblong_10",
+    "oblong_12",
+    "portrait_10",
+    "portrait_12",
+    "portrait_14",
+    "fair_copy_8",
+    "rushed_sketch_10",
+)
+
+_ARCHIVAL_LAYOUT_SPECS: Dict[str, Dict[str, Any]] = {
+    "oblong_10": {
+        "target_staves": 10,
+        "margin_x": (0.042, 0.062),
+        "margin_y": (0.038, 0.056),
+        "bar_width_var": (0.18, 0.32),
+        "bars_per_sys": 6,
+        "barline_overshoot_sp": (0.24, 0.46),
+        "rastrum_curve_var": (0.06, 0.18),
+        "sp_divisor": 7.2,
+    },
+    "oblong_12": {
+        "target_staves": 12,
+        "margin_x": (0.038, 0.058),
+        "margin_y": (0.035, 0.052),
+        "bar_width_var": (0.20, 0.35),
+        "bars_per_sys": 7,
+        "barline_overshoot_sp": (0.26, 0.50),
+        "rastrum_curve_var": (0.08, 0.22),
+        "sp_divisor": 7.4,
+    },
+    "portrait_10": {
+        "target_staves": 10,
+        "margin_x": (0.040, 0.062),
+        "margin_y": (0.038, 0.058),
+        "bar_width_var": (0.18, 0.32),
+        "bars_per_sys": 6,
+        "barline_overshoot_sp": (0.22, 0.44),
+        "rastrum_curve_var": (0.06, 0.18),
+        "sp_divisor": 7.3,
+    },
+    "portrait_12": {
+        "target_staves": 12,
+        "margin_x": (0.036, 0.056),
+        "margin_y": (0.035, 0.052),
+        "bar_width_var": (0.20, 0.35),
+        "bars_per_sys": 6,
+        "barline_overshoot_sp": (0.26, 0.48),
+        "rastrum_curve_var": (0.08, 0.22),
+        "sp_divisor": 7.5,
+    },
+    "portrait_14": {
+        "target_staves": 14,
+        "margin_x": (0.032, 0.050),
+        "margin_y": (0.032, 0.046),
+        "bar_width_var": (0.22, 0.35),
+        "bars_per_sys": 7,
+        "barline_overshoot_sp": (0.28, 0.52),
+        "rastrum_curve_var": (0.10, 0.24),
+        "sp_divisor": 7.6,
+    },
+    "fair_copy_8": {
+        "target_staves": 8,
+        "margin_x": (0.052, 0.072),
+        "margin_y": (0.045, 0.065),
+        "bar_width_var": (0.14, 0.24),
+        "bars_per_sys": 5,
+        "barline_overshoot_sp": (0.18, 0.34),
+        "rastrum_curve_var": (0.04, 0.12),
+        "sp_divisor": 7.4,
+    },
+    "rushed_sketch_10": {
+        "target_staves": 10,
+        "margin_x": (0.034, 0.054),
+        "margin_y": (0.036, 0.054),
+        "bar_width_var": (0.26, 0.35),
+        "bars_per_sys": 7,
+        "barline_overshoot_sp": (0.35, 0.62),
+        "rastrum_curve_var": (0.14, 0.28),
+        "sp_divisor": 7.0,
+    },
+}
+
+
+def apply_dense_archival_profile(
+    style: Dict[str, Any],
+    *,
+    layout_profile: Optional[str] = None,
+    target_staves: Optional[int] = None,
+    scanner_margin_frac: Optional[float] = None,
+    clean_paper: bool = False,
+) -> Dict[str, Any]:
+    """Configure dense historical manuscript layout (8–14 staves/page, tight margins,
+    chisel-nib iron-gall edge contrast, non-parallel rastrum curvature, and continuous
+    overflowing barlines).
+
+    Returns a new style dict without mutating ``style``.
+    """
+    out = dict(style or {})
+    name = str(out.get("name", "unnamed"))
+    era = str(out.get("era", "classical"))
+
+    if layout_profile is None:
+        prof_name = _deterministic_pick("da_prof", name, era, ARCHIVAL_LAYOUT_PROFILES)
+    else:
+        prof_name = str(layout_profile).strip().lower()
+        if prof_name not in _ARCHIVAL_LAYOUT_SPECS:
+            valid = ", ".join(ARCHIVAL_LAYOUT_PROFILES)
+            raise ValueError(f"Unknown archival layout_profile {layout_profile!r}. Valid: {valid}")
+
+    spec = _ARCHIVAL_LAYOUT_SPECS[prof_name]
+    staves = int(np.clip(target_staves if target_staves is not None else spec["target_staves"], 8, 14))
+
+    def _lerp_u(lo: float, hi: float, dom: str) -> float:
+        return round(float(lo + (hi - lo) * _u01(dom, name, era)), 4)
+
+    out["dense_archival"] = True
+    out["archival_layout_profile"] = prof_name
+    out["target_staves_per_page"] = staves
+    out["dense_archival_sp_divisor"] = float(spec["sp_divisor"])
+    out["dense_archival_bars_per_sys"] = int(spec["bars_per_sys"])
+    out["dense_fill_blank_staves"] = bool(out.get("dense_fill_blank_staves", True))
+
+    mx_lo, mx_hi = spec["margin_x"]
+    my_lo, my_hi = spec["margin_y"]
+    out["margin_left_frac"] = _lerp_u(mx_lo + 0.006, mx_hi + 0.008, "da_ml")
+    out["margin_right_frac"] = _lerp_u(mx_lo, mx_hi, "da_mr")
+    out["margin_top_frac"] = _lerp_u(my_lo, my_hi, "da_mt")
+    out["margin_bottom_frac"] = _lerp_u(my_lo, my_hi, "da_mb")
+    out["page_furniture_mode"] = "none"
+    out["paper_border_mode"] = "none"
+    out["dog_ear_prob"] = 0.0
+
+    bw_lo, bw_hi = spec["bar_width_var"]
+    out["bar_width_var"] = _lerp_u(bw_lo, bw_hi, "da_bwv")
+    bo_lo, bo_hi = spec["barline_overshoot_sp"]
+    out["barline_overshoot_sp"] = _lerp_u(bo_lo, bo_hi, "da_bov")
+    out["barline_span_mode"] = "full_system_connected"
+    out["force_system_brace"] = True
+
+    rc_lo, rc_hi = spec["rastrum_curve_var"]
+    out["rastrum_curve_var"] = _lerp_u(rc_lo, rc_hi, "da_rc")
+    out["staff_ruling_mode"] = "rastrum_coherent_quill"
+    out["rastrum_wobble"] = max(float(out.get("rastrum_wobble", 0.0)), _lerp_u(0.65, 1.85, "da_rw"))
+
+    # Authentic broad-edge chisel-nib & crisp iron-gall contrast defaults
+    if not (25.0 <= float(out.get("nib_angle_deg", 0.0)) <= 55.0):
+        out["nib_angle_deg"] = _lerp_u(25.0, 55.0, "da_na")
+    out["nib_anisotropy"] = max(float(out.get("nib_anisotropy", 0.0)), _lerp_u(0.38, 0.82, "da_aniso"))
+    out["edge_crispness"] = max(float(out.get("edge_crispness", 0.0)), _lerp_u(0.40, 0.85, "da_crisp"))
+    out["ink_mass"] = max(float(out.get("ink_mass", 0.0)), _lerp_u(0.24, 0.62, "da_mass"))
+
+    if clean_paper:
+        out["scanner_margin_frac"] = 0.0
+    elif scanner_margin_frac is not None:
+        out["scanner_margin_frac"] = round(float(np.clip(scanner_margin_frac, 0.0, 0.05)), 4)
+    elif "scanner_margin_frac" not in out or out["scanner_margin_frac"] is None:
+        out["scanner_margin_frac"] = _lerp_u(0.012, 0.032, "da_scan")
+
+    return out
+
+
+ARCHIVAL_V08_PRESETS: Dict[str, Dict[str, Any]] = {
+    "v08_dark_irongall_fair_oblong": {
+        "extends": "baroque_quill_neat",
+        "description": "High-contrast dark iron-gall 18th-c. oblong fair copy with crisp broad-edge chisel quill and dense 12-staff ruling.",
+        "era": "classical",
+        "ink_rgb": (0.07, 0.06, 0.05),
+        "staff_ink_rgb": (0.30, 0.25, 0.20),
+        "nib_angle_deg": 42.0,
+        "nib_min_ratio": 0.17,
+        "nib_anisotropy": 0.78,
+        "edge_crispness": 0.82,
+        "ink_mass": 0.58,
+        "rastrum_curve_var": 0.12,
+        "stroke_scale": 1.12,
+        "bar_width_var": 0.24,
+        "barline_overshoot_sp": 0.34,
+        "archival_layout_profile": "oblong_12",
+        "paper_type": "cream_manuscript",
+        "paper_rgb": (0.92, 0.89, 0.81),
+    },
+    "v08_dark_irongall_portrait_14": {
+        "extends": "bach_thick_iron_gall",
+        "description": "Dense 14-staff portrait folio in crisp oxidized iron-gall ink with strong junction pooling and narrow margins.",
+        "era": "baroque",
+        "ink_rgb": (0.09, 0.07, 0.05),
+        "staff_ink_rgb": (0.34, 0.28, 0.21),
+        "nib_angle_deg": 48.0,
+        "nib_min_ratio": 0.16,
+        "nib_anisotropy": 0.84,
+        "edge_crispness": 0.78,
+        "ink_mass": 0.65,
+        "rastrum_curve_var": 0.16,
+        "stroke_scale": 1.18,
+        "bar_width_var": 0.28,
+        "barline_overshoot_sp": 0.40,
+        "archival_layout_profile": "portrait_14",
+        "paper_type": "aged_rag",
+        "paper_rgb": (0.89, 0.84, 0.74),
+    },
+    "v08_aged_sepia_archival_bleed": {
+        "extends": "faded_sepia_archival",
+        "description": "Warm aged sepia archival folio with pronounced mirrored verso bleed-through and chisel-quill hairlines.",
+        "era": "classical",
+        "ink_rgb": (0.30, 0.20, 0.12),
+        "staff_ink_rgb": (0.46, 0.37, 0.27),
+        "nib_angle_deg": 34.0,
+        "nib_min_ratio": 0.21,
+        "nib_anisotropy": 0.68,
+        "edge_crispness": 0.62,
+        "ink_mass": 0.46,
+        "rastrum_curve_var": 0.18,
+        "bleed_through": 0.24,
+        "verso_bleed_alpha": 0.22,
+        "verso_bleed_invert": True,
+        "archival_layout_profile": "portrait_12",
+        "paper_type": "aged_rag",
+        "paper_rgb": (0.86, 0.79, 0.66),
+    },
+    "v08_light_graphite_composer_sketch": {
+        "extends": "debussy_pencil_sketch",
+        "description": "Light faded graphite pencil composer sketch with high paper-tooth grain, eraser smudges, and irregular bar widths.",
+        "era": "late_romantic_impressionist",
+        "ink_rgb": (0.34, 0.35, 0.36),
+        "staff_ink_rgb": (0.44, 0.43, 0.41),
+        "nib_angle_deg": 28.0,
+        "nib_min_ratio": 0.62,
+        "nib_anisotropy": 0.25,
+        "edge_crispness": 0.30,
+        "ink_mass": 0.14,
+        "rastrum_curve_var": 0.14,
+        "grain_strength": 0.46,
+        "ink_dropout": 0.24,
+        "bar_width_var": 0.34,
+        "eraser_smudge_prob": 0.55,
+        "archival_layout_profile": "rushed_sketch_10",
+        "paper_type": "cream_manuscript",
+        "paper_rgb": (0.94, 0.91, 0.85),
+    },
+    "v08_dense_18c_fair_copy": {
+        "extends": "mozart_flowing_cursive",
+        "description": "Compact 18th-century copyist fair copy with 30-degree goose quill, crisp downstrokes, and tight system rhythm.",
+        "era": "classical",
+        "ink_rgb": (0.14, 0.10, 0.08),
+        "staff_ink_rgb": (0.38, 0.32, 0.25),
+        "nib_angle_deg": 30.0,
+        "nib_min_ratio": 0.19,
+        "nib_anisotropy": 0.72,
+        "edge_crispness": 0.76,
+        "ink_mass": 0.44,
+        "rastrum_curve_var": 0.10,
+        "stroke_scale": 0.98,
+        "slant_deg": 12.0,
+        "bar_width_var": 0.20,
+        "archival_layout_profile": "fair_copy_8",
+        "paper_type": "cream_manuscript",
+        "paper_rgb": (0.93, 0.89, 0.80),
+    },
+    "v08_rushed_19c_autograph_sketch": {
+        "extends": "beethoven_hurried_autograph",
+        "description": "Rushed 19th-century autograph working draft with 52-degree chisel slant, overflowing barlines, and heavy ink pooling.",
+        "era": "romantic",
+        "ink_rgb": (0.11, 0.08, 0.06),
+        "staff_ink_rgb": (0.32, 0.27, 0.22),
+        "nib_angle_deg": 52.0,
+        "nib_min_ratio": 0.20,
+        "nib_anisotropy": 0.75,
+        "edge_crispness": 0.70,
+        "ink_mass": 0.72,
+        "rastrum_curve_var": 0.24,
+        "bar_width_var": 0.35,
+        "barline_overshoot_sp": 0.60,
+        "archival_layout_profile": "rushed_sketch_10",
+        "paper_type": "aged_rag",
+        "paper_rgb": (0.90, 0.85, 0.74),
+    },
+    "v08_mirrored_verso_thin_rag": {
+        "extends": "schubert_dense_lieder",
+        "description": "Thin 18th/19th-century rag sheet with strong inverted mirrored verso bleed-through and crisp steel-nib strokes.",
+        "era": "early_romantic",
+        "ink_rgb": (0.16, 0.12, 0.09),
+        "staff_ink_rgb": (0.36, 0.31, 0.26),
+        "nib_angle_deg": 39.0,
+        "nib_min_ratio": 0.22,
+        "nib_anisotropy": 0.64,
+        "edge_crispness": 0.74,
+        "ink_mass": 0.48,
+        "rastrum_curve_var": 0.15,
+        "bleed_through": 0.25,
+        "verso_bleed_alpha": 0.25,
+        "verso_bleed_invert": True,
+        "archival_layout_profile": "portrait_10",
+        "paper_type": "aged_rag",
+        "paper_rgb": (0.88, 0.83, 0.72),
+    },
+    "v08_steel_nib_salon_crisp": {
+        "extends": "chopin_delicate_salon",
+        "description": "Crisp 19th-century fine steel-nib salon fair copy on bright cream paper with sharp hairline-to-swell transitions.",
+        "era": "romantic",
+        "ink_rgb": (0.12, 0.10, 0.09),
+        "staff_ink_rgb": (0.35, 0.32, 0.28),
+        "nib_angle_deg": 26.0,
+        "nib_min_ratio": 0.20,
+        "nib_anisotropy": 0.60,
+        "edge_crispness": 0.86,
+        "ink_mass": 0.36,
+        "rastrum_curve_var": 0.08,
+        "stroke_scale": 0.86,
+        "archival_layout_profile": "portrait_10",
+        "paper_type": "bright_white",
+        "paper_rgb": (0.96, 0.95, 0.91),
+    },
+    "v08_faded_pencil_rehearsal_part": {
+        "extends": "debussy_pencil_sketch",
+        "description": "Very light rehearsal graphite part with dry-brush tooth, soft edges, and uneven hand-spaced measures.",
+        "era": "romantic",
+        "ink_rgb": (0.42, 0.42, 0.41),
+        "staff_ink_rgb": (0.48, 0.46, 0.43),
+        "nib_angle_deg": 32.0,
+        "nib_min_ratio": 0.70,
+        "nib_anisotropy": 0.18,
+        "edge_crispness": 0.22,
+        "ink_mass": 0.10,
+        "rastrum_curve_var": 0.12,
+        "grain_strength": 0.52,
+        "ink_dropout": 0.30,
+        "bar_width_var": 0.30,
+        "archival_layout_profile": "oblong_10",
+        "paper_type": "cream_manuscript",
+        "paper_rgb": (0.92, 0.90, 0.84),
+    },
+    "v08_broad_chisel_choral_folio": {
+        "extends": "romantic_copyist_oblong",
+        "description": "Broad-chisel 54-degree archival choral/chamber copyist hand with bold vertical-vs-horizontal stroke contrast.",
+        "era": "baroque",
+        "ink_rgb": (0.10, 0.08, 0.07),
+        "staff_ink_rgb": (0.30, 0.26, 0.22),
+        "nib_angle_deg": 54.0,
+        "nib_min_ratio": 0.15,
+        "nib_anisotropy": 0.88,
+        "edge_crispness": 0.84,
+        "ink_mass": 0.52,
+        "rastrum_curve_var": 0.10,
+        "stroke_scale": 1.15,
+        "archival_layout_profile": "oblong_10",
+        "paper_type": "aged_rag",
+        "paper_rgb": (0.90, 0.86, 0.77),
+    },
+}
+
+
+def list_archival_v08_presets() -> list[str]:
+    """Return the ordered list of v0.8 archival diversity style preset names."""
+    return list(ARCHIVAL_V08_PRESETS.keys())
+
+
+def get_archival_v08_preset(name: str) -> Dict[str, Any]:
+    """Resolve and validate a named v0.8 archival diversity style preset."""
+    if name not in ARCHIVAL_V08_PRESETS:
+        valid = ", ".join(ARCHIVAL_V08_PRESETS.keys())
+        raise KeyError(f"Unknown v0.8 archival preset {name!r}. Valid presets: {valid}")
+    from .styles import get_style, validate_style
+
+    spec = ARCHIVAL_V08_PRESETS[name]
+    base = get_style(str(spec["extends"]))
+    for k, v in spec.items():
+        if k != "extends":
+            base[k] = v
+    return validate_style(base, name=name)
+
+
 def _u01(domain: str, name: str, era: str) -> float:
     digest = hashlib.sha256(f"v03:{domain}:{name}:{era}".encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") / float(1 << 64)
@@ -532,6 +912,8 @@ def resolve_page_and_expressive_profile(
     historical_era: bool = False,
     sepia_mode: Optional[str] = None,
     dense_landscape: bool = False,
+    dense_archival: bool = False,
+    archival_layout: Optional[str] = None,
     verso_bleed: Optional[float] = None,
     scanner_margin_frac: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -850,6 +1232,15 @@ def resolve_page_and_expressive_profile(
         resolved = apply_dense_landscape_profile(
             resolved,
             target_staves=int(st.get("target_staves_per_page", 12)),
+            scanner_margin_frac=scanner_margin_frac if scanner_margin_frac is not None else st.get("scanner_margin_frac"),
+            clean_paper=clean_paper,
+        )
+    eff_arch_layout = archival_layout if archival_layout is not None else st.get("archival_layout_profile")
+    if dense_archival or bool(st.get("dense_archival", False)) or eff_arch_layout is not None:
+        resolved = apply_dense_archival_profile(
+            resolved,
+            layout_profile=str(eff_arch_layout) if eff_arch_layout is not None else None,
+            target_staves=int(st["target_staves_per_page"]) if "target_staves_per_page" in st and st["target_staves_per_page"] is not None else None,
             scanner_margin_frac=scanner_margin_frac if scanner_margin_frac is not None else st.get("scanner_margin_frac"),
             clean_paper=clean_paper,
         )

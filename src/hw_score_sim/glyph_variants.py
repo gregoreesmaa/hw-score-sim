@@ -637,6 +637,28 @@ def _draw_blob_with_fill_density(
     local_style["stroke_opacity"] = float(np.clip(base_op * (0.82 + 0.18 * fd), 0.25, 1.0))
     draw_filled_blob(canvas, nx, ny, rx, ry, angle_deg, color_rgb, local_style, hollow=False)
 
+    nib_aniso = float(np.clip(style.get("nib_anisotropy", 0.0), 0.0, 1.0))
+    if nib_aniso >= 0.25 and fd >= 0.72:
+        # Organic broad-edge quill-dab landing stroke along the nib angle.
+        nib_rad = math.radians(float(style.get("nib_angle_deg", 35.0)))
+        dab_len = min(rx, ry) * (0.45 + 0.30 * nib_aniso)
+        dab_seg = np.array(
+            [[-dab_len, 0.0], [dab_len, 0.0]],
+            dtype=np.float64,
+        )
+        dab_style = dict(local_style)
+        dab_style["taper_start"] = 0.08
+        dab_style["taper_end"] = 0.12
+        dab_style["wobble_px"] = min(float(style.get("wobble_px", 0.7)), 0.45)
+        draw_calligraphic_polyline(
+            canvas,
+            _rot_pts(dab_seg, nx, ny, -nib_rad),
+            color_rgb,
+            max(0.85, min(rx, ry) * (0.72 + 0.25 * nib_aniso)),
+            dab_style,
+            kind="notehead_quill_dab",
+        )
+
     if fd > 1.12:
         # Heavy/saturated ink pass across the body of the notehead.
         rad = math.radians(angle_deg)

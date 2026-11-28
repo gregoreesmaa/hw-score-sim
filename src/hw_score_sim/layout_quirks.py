@@ -735,16 +735,23 @@ def build_curved_staff_y(
         dtype=np.float64,
     )
 
-    # Subtle per-line sp jitter for the 5 staff lines [-2, -1, 0, 1, 2]
+    # Subtle per-line sp jitter + optional non-parallel rastrum curvature for the 5 staff lines [-2, -1, 0, 1, 2]
     # Center line (0) has zero offset so y_fn(x, 0) == exact Bezier centerline.
+    rastrum_curve_var = float(np.clip(style.get("rastrum_curve_var", 0.0), 0.0, 0.35))
     max_line_shift = 0.22 * sp
     line_offsets: dict[int, float] = {0: 0.0}
     line_drifts: dict[int, float] = {0: 0.0}
+    line_bows: dict[int, float] = {0: 0.0}
     for k in (-2, -1, 1, 2):
         raw_off = float(rng.normal(0.0, sp * sp_jitter_frac))
         raw_drift = float(rng.normal(0.0, sp * sp_jitter_frac * 0.6))
         line_offsets[k] = float(np.clip(raw_off, -max_line_shift, max_line_shift))
         line_drifts[k] = float(np.clip(raw_drift, -0.5 * max_line_shift, 0.5 * max_line_shift))
+        if rastrum_curve_var > 1e-4:
+            raw_bow = float(rng.normal(0.0, sp * rastrum_curve_var * 0.45))
+            line_bows[k] = float(np.clip(raw_bow, -0.18 * sp, 0.18 * sp))
+        else:
+            line_bows[k] = 0.0
 
     cy0, cy1, cy2, cy3 = float(y0), float(y1), float(y2), float(y3)
     inv_span = 1.0 / span_x
@@ -764,7 +771,10 @@ def build_curved_staff_y(
         idx = int(line_idx)
         offset = line_offsets.get(idx, 0.0)
         drift = line_drifts.get(idx, 0.0)
+        bow = line_bows.get(idx, 0.0)
         y_val = y_mid + idx * sp_out + offset + drift * (t - 0.5)
+        if bow != 0.0:
+            y_val = y_val + bow * (4.0 * t * omt)
         if is_scalar:
             return float(y_val)
         return y_val

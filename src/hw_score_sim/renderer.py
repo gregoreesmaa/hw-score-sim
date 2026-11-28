@@ -148,6 +148,7 @@ def layout_score_pages(
     system_h = n_staves * staff_h + max(0, n_staves - 1) * intra_gap
 
     is_dense_landscape = bool(style.get("dense_landscape", False))
+    is_dense_archival = bool(style.get("dense_archival", False))
     zero_inter_gap = bool(style.get("zero_inter_system_gap", False))
     avail_h = max(120.0, float(page_h) - margin_top - margin_bottom)
 
@@ -163,6 +164,18 @@ def layout_score_pages(
         intra_gap = uniform_gap if n_staves > 1 else 0.0
         gap_ratio = float(np.clip(style.get("dense_inter_gap_ratio", 1.0), 0.85, 1.25))
         inter_system_gap = uniform_gap * gap_ratio
+        system_h = n_staves * staff_h + max(0, n_staves - 1) * intra_gap
+    elif is_dense_archival:
+        # Dense archival manuscript layout (8-14 staves/page, oblong or portrait):
+        # matches real archival staff-spacing (~6-9 px at 1024px) and high ink density.
+        target_staves = int(np.clip(style.get("target_staves_per_page", 12), max(n_staves, 8), 14))
+        staff_step = avail_h / float(target_staves)
+        sp_div = float(np.clip(style.get("dense_archival_sp_divisor", 7.4), 6.2, 8.8))
+        sp = float(np.clip(staff_step / sp_div, 5.5, 16.5))
+        staff_h = 4.0 * sp
+        base_gap = max(2.0 * sp, staff_step - staff_h)
+        intra_gap = (base_gap * 0.92) if n_staves > 1 else 0.0
+        inter_system_gap = base_gap * (1.18 if n_staves > 1 else 1.0)
         system_h = n_staves * staff_h + max(0, n_staves - 1) * intra_gap
     elif n_staves > 1 and system_h > avail_h * 0.94:
         # Ensure 5-6 staff systems still fit cleanly inside available vertical page height (e.g. landscape).
@@ -180,6 +193,8 @@ def layout_score_pages(
     is_hist_clean = bool(style.get("historical_clean", False))
     if is_dense_landscape:
         bars_per_sys_default = 6 if n_staves >= 2 else 7
+    elif is_dense_archival:
+        bars_per_sys_default = int(np.clip(style.get("dense_archival_bars_per_sys", 6 if n_staves >= 2 else 7), 4, 9))
     elif is_hist_clean:
         bars_per_sys_default = 6 if n_staves >= 2 else 7
     else:
@@ -195,10 +210,10 @@ def layout_score_pages(
 
     # In historical_clean mode (unless dense_landscape controls the 12-staff grid),
     # plan 1-3 unused pre-ruled rastrum staves (top / inter-system / bottom).
-    use_hc_unused = is_hist_clean and not is_dense_landscape
+    use_hc_unused = is_hist_clean and not is_dense_landscape and not is_dense_archival
     hc_target_unused = rng.randint(1, 3) if use_hc_unused else 0
     hc_placed_unused = 0
-    blank_step_h = (staff_h + inter_system_gap) if is_dense_landscape else (staff_h + max(4.2 * sp, inter_system_gap * 0.72))
+    blank_step_h = (staff_h + inter_system_gap) if (is_dense_landscape or is_dense_archival) else (staff_h + max(4.2 * sp, inter_system_gap * 0.72))
     # Reserve vertical space at bottom for at least 1 unused rastrum staff when page height allows
     hc_bottom_reserve = (inter_system_gap + staff_h) if (use_hc_unused and avail_h >= system_h + inter_system_gap + staff_h * 1.5) else 0.0
     hc_inter_after_sys = rng.randint(0, 1) if (use_hc_unused and hc_target_unused >= 2) else -1
@@ -337,7 +352,7 @@ def layout_score_pages(
                         break
                 else:
                     break
-            elif is_dense_landscape and bool(style.get("dense_fill_blank_staves", True)):
+            elif (is_dense_landscape or is_dense_archival) and bool(style.get("dense_fill_blank_staves", True)):
                 placed_staves = sum(len(s.staves) for s in systems)
                 target_staves_dl = int(np.clip(style.get("target_staves_per_page", 12), max(n_staves, 4), 16))
                 if placed_staves < target_staves_dl:
@@ -379,7 +394,7 @@ def layout_score_pages(
         while hc_placed_unused < hc_target_unused:
             if not _append_blank_staff():
                 break
-    elif is_dense_landscape and bool(style.get("dense_fill_blank_staves", True)):
+    elif (is_dense_landscape or is_dense_archival) and bool(style.get("dense_fill_blank_staves", True)):
         target_staves_dl = int(np.clip(style.get("target_staves_per_page", 12), max(n_staves, 4), 16))
         while sum(len(s.staves) for s in systems) < target_staves_dl:
             if not _append_blank_staff():
@@ -1311,6 +1326,8 @@ def render_score_handwritten(
     sepia_mode: Optional[str] = None,
     verso_bleed: Optional[float] = None,
     dense_landscape: bool = False,
+    dense_archival: bool = False,
+    archival_layout: Optional[str] = None,
     scanner_margin_frac: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Render a MusicXML / MuseScore file in the given handwritten style.
@@ -1336,6 +1353,8 @@ def render_score_handwritten(
         if eff_sepia_mode == "none":
             eff_sepia_mode = None
     eff_dense_landscape = bool(dense_landscape or raw_style.get("dense_landscape", False))
+    eff_arch_layout = archival_layout if archival_layout is not None else raw_style.get("archival_layout_profile")
+    eff_dense_archival = bool(dense_archival or raw_style.get("dense_archival", False) or eff_arch_layout is not None)
     eff_verso_bleed = verso_bleed if verso_bleed is not None else raw_style.get("verso_bleed_alpha")
     eff_scan_margin = scanner_margin_frac if scanner_margin_frac is not None else raw_style.get("scanner_margin_frac")
     # Merge deterministic v0.3.0 Layers 1–4 profile (explicit keys in raw_style always win)
@@ -1347,6 +1366,8 @@ def render_score_handwritten(
             historical_era=eff_hist_era,
             sepia_mode=eff_sepia_mode,
             dense_landscape=eff_dense_landscape,
+            dense_archival=eff_dense_archival,
+            archival_layout=str(eff_arch_layout) if eff_arch_layout is not None else None,
             verso_bleed=eff_verso_bleed,
             scanner_margin_frac=eff_scan_margin,
         )
@@ -1367,6 +1388,14 @@ def render_score_handwritten(
         style = profile_resolver.apply_dense_landscape_profile(
             style,
             target_staves=int(raw_style.get("target_staves_per_page", 12)),
+            scanner_margin_frac=eff_scan_margin,
+            clean_paper=clean_paper,
+        )
+    if eff_dense_archival:
+        style = profile_resolver.apply_dense_archival_profile(
+            style,
+            layout_profile=str(eff_arch_layout) if eff_arch_layout is not None else None,
+            target_staves=int(raw_style["target_staves_per_page"]) if "target_staves_per_page" in raw_style and raw_style["target_staves_per_page"] is not None else None,
             scanner_margin_frac=eff_scan_margin,
             clean_paper=clean_paper,
         )
@@ -2420,6 +2449,8 @@ def render_score_handwritten(
         "historical_era": bool(eff_hist_era),
         "sepia_mode": eff_sepia_mode or "none",
         "dense_landscape": bool(eff_dense_landscape),
+        "dense_archival": bool(eff_dense_archival),
+        "archival_layout_profile": style.get("archival_layout_profile"),
         "verso_bleed_alpha": float(style["verso_bleed_alpha"]) if "verso_bleed_alpha" in style and style["verso_bleed_alpha"] is not None else None,
         "omit_cont_header_prob": float(eff_omit_cont_prob),
         "omit_cont_header": bool(omit_cont_header_active),

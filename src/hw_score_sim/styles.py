@@ -1115,6 +1115,11 @@ _NUMERIC_CLAMP_BOUNDS: dict[str, tuple[float, float]] = {
     "chord_x_stagger_sp": (0.0, 0.28),
     "accidental_x_offset_sp": (0.92, 1.85),
     "accidental_x_jitter_sp": (0.0, 0.34),
+    # v0.8.0 Chisel-nib physics, crisp iron-gall contrast & non-parallel rastrum
+    "nib_anisotropy": (0.0, 1.0),
+    "edge_crispness": (0.0, 1.0),
+    "ink_mass": (0.0, 1.0),
+    "rastrum_curve_var": (0.0, 0.35),
 }
 
 _OPTIONAL_NUMERIC_DEFAULTS: dict[str, float] = {
@@ -1181,6 +1186,11 @@ _OPTIONAL_NUMERIC_DEFAULTS: dict[str, float] = {
     "chord_x_stagger_sp": 0.0,
     "accidental_x_offset_sp": 1.25,
     "accidental_x_jitter_sp": 0.0,
+    # v0.8.0 neutral defaults
+    "nib_anisotropy": 0.0,
+    "edge_crispness": 0.0,
+    "ink_mass": 0.0,
+    "rastrum_curve_var": 0.0,
 }
 
 LIGATURE_PATTERNS: tuple[str, ...] = (
@@ -1839,6 +1849,21 @@ def sample_random_scribe(
         scribe["rastrum_wobble"] = float(np.clip(rng.uniform(0.0, 2.5), 0.0, 6.0))
     if "stain_prob" not in scribe:
         scribe["stain_prob"] = float(np.clip(rng.uniform(0.0, 0.30) if rng.random() < 0.35 else 0.0, 0.0, 1.0))
+    if base_style is None and j > 0.0:
+        scribe["nib_angle_deg"] = float(rng.uniform(25.0, 55.0))
+    if "nib_anisotropy" not in scribe:
+        # Broad-nib / quill / fountain-pen scribes get authentic chisel-nib anisotropy.
+        nmr = float(scribe.get("nib_min_ratio", 0.35))
+        if nmr <= 0.65:
+            scribe["nib_anisotropy"] = float(np.clip(rng.uniform(0.25, 0.85), 0.0, 1.0))
+        else:
+            scribe["nib_anisotropy"] = float(np.clip(rng.uniform(0.0, 0.20), 0.0, 1.0))
+    if "edge_crispness" not in scribe:
+        scribe["edge_crispness"] = float(np.clip(rng.uniform(0.20, 0.85), 0.0, 1.0))
+    if "ink_mass" not in scribe:
+        scribe["ink_mass"] = float(np.clip(rng.uniform(0.12, 0.65), 0.0, 1.0))
+    if "rastrum_curve_var" not in scribe:
+        scribe["rastrum_curve_var"] = float(np.clip(rng.uniform(0.0, 0.22), 0.0, 0.35))
 
     # Sample morphological notehead parameters & explore all 18 archetypes.
     # MUSCIMA++ biometrics: 76% core / 14% slim / 10% wide notehead_aspect.
