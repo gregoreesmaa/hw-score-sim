@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 from PIL import Image
 
-from . import expressive_glyphs, glyph_variants, layout_quirks, manuscript_marks, profile_resolver, stroke_engine, styles
+from . import _substrate_cal, expressive_glyphs, glyph_variants, layout_quirks, manuscript_marks, profile_resolver, stroke_engine, styles
 from .musescore_compat import (
     NoteEvent,
     ParsedScore,
@@ -2401,7 +2401,8 @@ def render_score_handwritten(
         avg_sp = float(sum(sps) / len(sps)) if sps else 12.0
         layout_quirks.draw_margin_annotations(canvas, style, np_rng, staff_ys=staff_ys, sp=avg_sp)
 
-    # 4. Composite & save output PNG + companion Bezier GT JSON
+    # 4. Optical substrate calibration, composite & save output PNG + companion Bezier GT JSON
+    _substrate_cal.apply_substrate_cal(canvas.buf, seed=int(seed))
     out_path = Path(out_png)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     final_img = canvas.to_pil()

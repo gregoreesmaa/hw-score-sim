@@ -14,6 +14,8 @@ from typing import Callable, Optional, Sequence, Union
 import numpy as np
 from PIL import Image
 
+from . import _substrate_cal
+
 
 RGBLike = Union[np.ndarray, Sequence[float]]
 
@@ -773,6 +775,8 @@ def draw_staff_line(
         if rastrum_wobble > 0.0:
             n_rknots = max(4, int(n / 90.0) + 3)
             ys = ys + _smooth_1d_noise(rng, n, n_rknots) * rastrum_wobble
+        sp_est = float(style.get("sp", style.get("staff_space", max(8.0, float(base_width) / 0.085))))
+        ys = ys + _substrate_cal.rastrum_micro_wave(xs, sp_est)
 
     if wobble_px > 0.0:
         b1 = float(rng.normal(0.0, wobble_px * 0.5))
@@ -880,6 +884,19 @@ def draw_rastrum_staff(
         shared_wave = _smooth_1d_noise(canvas.rng, n, n_knots) * rastrum_amp
     else:
         shared_wave = np.zeros(n, dtype=np.float64)
+
+    # Coherent 5-line rastrum harmonic micro-profile (scale-invariant in staff-space units)
+    xs_r = np.arange(ix0, ix1, dtype=np.float64)
+    sp_r = float(style.get("sp", style.get("staff_space", 16.0)))
+    if len(line_indices) >= 2:
+        try:
+            xm = 0.5 * (x0 + x1)
+            dy_sp = abs(float(y_fn(xm, line_indices[1])) - float(y_fn(xm, line_indices[0])))
+            if 4.0 <= dy_sp <= 48.0:
+                sp_r = dy_sp
+        except Exception:
+            pass
+    shared_wave = shared_wave + _substrate_cal.rastrum_micro_wave(xs_r, sp_r)
 
     # Line-weight profile multipliers across the 5 rastrum nibs (-2..+2)
     profile = str(style.get("staff_line_weight_profile", "uniform")).strip().lower()
